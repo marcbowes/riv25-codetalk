@@ -1,0 +1,19 @@
+{
+  "name": "ch07-lambda",
+  "version": "1.0.0",
+  "description": "Chapter 07 - Query Optimization with Aurora DSQL",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@aws-sdk/dsql-signer": "^3.0.0",
+    "postgres": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

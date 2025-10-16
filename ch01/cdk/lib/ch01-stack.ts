@@ -15,6 +15,9 @@ export class Ch01Stack extends cdk.Stack {
       functionName: 'ch01',
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
+      bundling: {
+        forceDockerBundling: false,
+      },
     });
 
     new cdk.CfnOutput(this, 'FunctionName', {

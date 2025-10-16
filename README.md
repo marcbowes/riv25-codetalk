@@ -27,6 +27,15 @@ ch03/
 └── lambda/       # Lambda function code
     └── src/
         └── index.ts
+
+ch07/
+├── cdk/          # CDK app for query optimization demo
+├── lambda/       # Lambda function code
+│   └── src/
+│       └── index.ts
+├── README.md     # Chapter-specific documentation
+├── setup.sql     # Database setup script
+└── PERFORMANCE_RESULTS.md  # Detailed performance analysis
 ```
 
 ## Quick Start
@@ -41,8 +50,8 @@ $ npm install
 $ cd ch01/cdk
 $ npm run cdk deploy
 
-# For chapters with DSQL (ch03-ch06), provide cluster endpoint
-$ export CLUSTER_ENDPOINT=your-cluster-id.dsql.us-west-2.on.aws
+# For chapters with DSQL (ch03-ch07), provide cluster endpoint
+$ export CLUSTER_ENDPOINT=your-cluster-id.dsql.us-east-1.on.aws
 $ cd ch03/cdk
 $ npm run cdk deploy -- -c clusterEndpoint=$CLUSTER_ENDPOINT
 
@@ -694,3 +703,114 @@ $ aws lambda update-function-code --function-name ch06 --zip-file fileb://functi
 $ ./add-dsql-permissions.sh ch06
 $ aws lambda invoke --function-name ch06 --payload '{"payer_id": "123e4567-e89b-12d3-a456-426614174000", "payee_id": "123e4567-e89b-12d3-a456-426614174001", "amount": "10"}' response.json
 ```
+
+## Chapter 07
+
+Chapter 07 demonstrates query optimization techniques with Aurora DSQL, showing how proper indexing can visibly improve query performance.
+
+### Overview
+
+This chapter provides a Lambda function with four operations to demonstrate progressive query optimization:
+
+- `setup`: Creates the database table with 5,000 rows and initial suboptimal index
+- `query`: Runs a complex query with the suboptimal index and measures performance
+- `optimize`: Creates better indexes for the query
+- `query_optimized`: Runs the same query with an INCLUDE index
+
+### Database Schema
+
+The `accounts7` table contains typical account data:
+
+``` sql
+CREATE TABLE accounts7 (
+  id INT,
+  account_type VARCHAR(20),     -- 'savings' or 'checking'
+  region_code CHAR(2),          -- 'US', 'UK', 'DE', 'FR'
+  status VARCHAR(10),           -- 'active' or 'inactive'
+  created_at TIMESTAMP DEFAULT NOW(),
+  balance DECIMAL(10,2),
+  metadata_key VARCHAR(50),     -- 'account_tier_1', etc.
+  metadata_value TEXT,
+  PRIMARY KEY (id, created_at)
+);
+```
+
+### Query Optimization Demonstration
+
+The test query filters on multiple columns:
+
+``` sql
+SELECT metadata_key, metadata_value
+FROM accounts7
+WHERE account_type = 'savings'
+  AND region_code = 'US'
+  AND status = 'active'
+  AND metadata_key = 'account_tier_1'
+  AND created_at <= CURRENT_TIMESTAMP
+  AND created_at > CURRENT_TIMESTAMP - INTERVAL '1 year'
+```
+
+**Performance Results:**
+- **Before optimization**: ~456ms execution time using basic `account_type` index
+- **After optimization**: ~257ms execution time using composite `metadata_key, account_type` index
+- **Improvement**: 1.8x faster with 5.2x fewer rows scanned
+
+### Optimization Steps
+
+1. **Initial setup**: Single index on `account_type` only
+   ``` sql
+   CREATE INDEX ASYNC idx_accounts7_type ON accounts7(account_type);
+   ```
+
+2. **Better composite index**: Leading with most selective column
+   ``` sql
+   CREATE INDEX ASYNC idx_accounts7_metadata ON accounts7(metadata_key, account_type);
+   ```
+
+3. **Covering index**: Includes all query columns for index-only scans
+   ``` sql
+   CREATE INDEX ASYNC idx_accounts7_metadata_covering 
+   ON accounts7(metadata_key, account_type) 
+   INCLUDE (region_code, status, created_at, metadata_value);
+   ```
+
+### Deploy and Test
+
+Deploy the Lambda function:
+
+``` sh
+$ export CLUSTER_ENDPOINT=your-cluster-id.dsql.us-east-1.on.aws
+$ cd ch07/cdk
+$ npm run cdk deploy -- -c clusterEndpoint=$CLUSTER_ENDPOINT
+```
+
+Test the optimization workflow:
+
+``` sh
+# 1. Setup database with 5,000 rows
+$ aws lambda invoke --function-name ch07 \
+  --payload '{"operation": "setup"}' response.json
+
+# 2. Run query with suboptimal index
+$ aws lambda invoke --function-name ch07 \
+  --payload '{"operation": "query", "metadata_key": "account_tier_1", "account_type": "savings", "region_code": "US", "status": "active"}' \
+  response.json
+
+# 3. Create optimized indexes
+$ aws lambda invoke --function-name ch07 \
+  --payload '{"operation": "optimize"}' response.json
+
+# 4. Run query with optimized indexes
+$ aws lambda invoke --function-name ch07 \
+  --payload '{"operation": "query_optimized", "metadata_key": "account_tier_1", "account_type": "savings", "region_code": "US", "status": "active"}' \
+  response.json
+```
+
+### Key Learning Points
+
+1. **Index selectivity**: Leading with the most selective column improves performance
+2. **Covering indexes**: Including all needed columns enables index-only scans
+3. **DSQL query planner**: EXPLAIN ANALYZE provides detailed execution plans with actual timing and row counts
+4. **Composite indexes**: Column order significantly affects performance
+
+The response includes execution time, rows returned, and detailed query plans showing the optimization impact.
