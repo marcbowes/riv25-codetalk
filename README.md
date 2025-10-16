@@ -348,6 +348,152 @@ The Lambda is now connecting with the `myapp` role instead of `admin`, following
 
 **Reference:** See `ch02/` directory for the complete implementation.
 
+## Chapter 03: Build a Money Transfer API
+
+**Time:** ~10 minutes
+
+In this chapter, we'll build a simple money transfer API that moves funds between accounts, demonstrating basic transaction handling.
+
+### Step 1: Create Accounts Table
+
+In your psql session that's still open from Chapter 01, create the accounts table:
+
+```sql
+CREATE TABLE accounts (
+  id INT PRIMARY KEY,
+  balance INT
+);
+```
+
+Insert 1000 test accounts, each with a balance of 100:
+
+```sql
+INSERT INTO accounts (id, balance)
+SELECT id, 100 FROM generate_series(1, 1000) AS id;
+```
+
+Verify the data:
+
+```sql
+SELECT COUNT(*) FROM accounts;
+SELECT * FROM accounts LIMIT 5;
+```
+
+### Step 2: Update Lambda Request and Response Types
+
+Edit `lambda/src/index.ts` and update the interfaces:
+
+```typescript
+interface Request {
+  payer_id: number;
+  payee_id: number;
+  amount: number;
+}
+
+interface Response {
+  balance: number;
+}
+```
+
+### Step 3: Implement Transfer Logic with Transaction
+
+Update the handler to perform the money transfer in a transaction:
+
+```typescript
+export const handler: Handler<Request, Response> = async (event) => {
+  const pool = await getPool();
+  const client = await pool.connect();
+
+  try {
+    // Begin transaction
+    await client.query('BEGIN');
+
+    // Deduct from payer
+    const deductResult = await client.query(
+      'UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance',
+      [event.amount, event.payer_id]
+    );
+
+    if (deductResult.rows.length === 0) {
+      throw new Error('Payer account not found');
+    }
+
+    const payerBalance = deductResult.rows[0].balance;
+
+    if (payerBalance < 0) {
+      throw new Error('Insufficient balance');
+    }
+
+    // Add to payee
+    const addResult = await client.query(
+      'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
+      [event.amount, event.payee_id]
+    );
+
+    if (addResult.rowCount === 0) {
+      throw new Error('Payee account not found');
+    }
+
+    // Commit transaction
+    await client.query('COMMIT');
+
+    return {
+      balance: payerBalance
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+```
+
+This implementation:
+- Uses explicit BEGIN/COMMIT/ROLLBACK for transaction control
+- Deducts from payer and returns the new balance
+- Checks for insufficient funds
+- Adds to payee
+- Rolls back on any error
+
+### Step 4: Deploy
+
+```sh
+cd cdk
+npx cdk deploy
+```
+
+### Step 5: Test the Transfer
+
+Test a transfer from account 1 to account 2 using the helper:
+
+```sh
+node helper.js --test-chapter 3
+# Expected: ✅ Chapter 3 test PASSED
+#           Payer balance after transfer: 90
+```
+
+Or test directly with aws lambda invoke:
+
+```sh
+aws lambda invoke \
+  --function-name reinvent-dat401 \
+  --payload '{"payer_id":1,"payee_id":2,"amount":10}' \
+  response.json && cat response.json && rm response.json
+```
+
+Expected output: `{"balance":80}` (account 1 now has 80 after another 10 transfer)
+
+Verify in psql:
+
+```sql
+SELECT * FROM accounts WHERE id IN (1, 2);
+```
+
+You should see the updated balances reflecting the transfers.
+
+**Reference:** See `ch03/` directory for the complete implementation.
+
 ## Project Structure
 
 Each chapter is a self-contained workspace with:
@@ -378,6 +524,14 @@ ch02/
 ├── helper.js     # Testing utility
 ├── cdk/          # CDK app with DbConnect permission for myapp
 └── lambda/       # Lambda function code using myapp role
+    └── src/
+        └── index.ts
+
+ch03/
+├── package.json  # Workspace config with dependencies
+├── helper.js     # Testing utility
+├── cdk/          # CDK app unchanged from ch02
+└── lambda/       # Lambda function with money transfer API
     └── src/
         └── index.ts
 ```

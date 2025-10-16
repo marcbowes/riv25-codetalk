@@ -220,6 +220,42 @@ async function testChapter2() {
   }
 }
 
+async function testChapter3() {
+  console.log('Testing Chapter 3: Money transfer');
+  console.log();
+
+  const payload = { payer_id: 1, payee_id: 2, amount: 10 };
+  console.log(`Invoking Lambda function '${FUNCTION_NAME}' with payload '${JSON.stringify(payload)}'`);
+
+  const client = new LambdaClient({});
+
+  try {
+    const command = new InvokeCommand({
+      FunctionName: FUNCTION_NAME,
+      Payload: JSON.stringify(payload)
+    });
+
+    const response = await client.send(command);
+    const responsePayload = JSON.parse(Buffer.from(response.Payload).toString());
+
+    console.log('Response:', JSON.stringify(responsePayload, null, 2));
+
+    if (typeof responsePayload.balance === 'number') {
+      console.log('✅ Chapter 3 test PASSED');
+      console.log(`   Payer balance after transfer: ${responsePayload.balance}`);
+    } else if (responsePayload.errorMessage) {
+      console.log('❌ Chapter 3 test FAILED with error:', responsePayload.errorMessage);
+      if (responsePayload.errorMessage.includes('Insufficient balance')) {
+        console.log('   Account may have insufficient funds. Check account balances.');
+      }
+    } else {
+      console.log('❌ Chapter 3 test FAILED - unexpected response');
+    }
+  } catch (err) {
+    console.error('❌ Chapter 3 test FAILED:', err.message);
+  }
+}
+
 function loadUuids(numAccounts) {
   try {
     const content = readFileSync('uuids.txt', 'utf-8');
@@ -394,6 +430,8 @@ async function main() {
       await testChapter1();
     } else if (args.testChapter === 2) {
       await testChapter2();
+    } else if (args.testChapter === 3) {
+      await testChapter3();
     } else {
       console.error(`Unknown test chapter: ${args.testChapter}`);
       process.exit(1);

@@ -1,5 +1,5 @@
 {
-  "name": "ch03-dat401-cdk",
+  "name": "ch02-dat401-cdk",
   "version": "1.0.0",
   "bin": {
     "dat401-cdk": "bin/dat401-cdk.js"

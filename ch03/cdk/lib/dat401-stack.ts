@@ -34,10 +34,10 @@ export class Dat401Stack extends cdk.Stack {
       }
     });
 
-    // Add DSQL DbConnectAdmin permission
+    // Add DSQL DbConnect permission for myapp role
     lambdaFunction.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['dsql:DbConnectAdmin'],
+      actions: ['dsql:DbConnect'],
       resources: [cluster.attrResourceArn]
     }));
 
@@ -45,6 +45,12 @@ export class Dat401Stack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ClusterEndpoint', {
       value: clusterEndpoint,
       description: 'DSQL Cluster Endpoint'
+    });
+
+    // Output the Lambda execution role ARN
+    new cdk.CfnOutput(this, 'LambdaRoleArn', {
+      value: lambdaFunction.role!.roleArn,
+      description: 'Lambda Execution Role ARN'
     });
   }
 }
