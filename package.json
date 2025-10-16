@@ -1,26 +1,9 @@
 {
   "name": "riv25-codetalk-typescript",
   "version": "1.0.0",
-  "description": "Amazon Aurora DSQL demo with TypeScript",
+  "description": "Amazon Aurora DSQL demo with TypeScript - Each chapter is a self-contained workspace",
   "private": true,
-  "workspaces": [
-    "ch01/cdk",
-    "ch01/lambda",
-    "ch03/cdk",
-    "ch03/lambda",
-    "ch04/cdk",
-    "ch04/lambda",
-    "ch05/cdk",
-    "ch05/lambda",
-    "ch06/cdk",
-    "ch06/lambda"
-  ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "clean": "npm run clean --workspaces"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.0.0"
+    "test": "echo \"Each chapter is self-contained. Run 'npm install' in individual chapter directories.\""
   }
 }

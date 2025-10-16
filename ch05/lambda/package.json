@@ -1,14 +1,14 @@
 {
   "name": "ch05",
   "version": "1.0.0",
-  "description": "Chapter 05 - Add OCC retry logic",
+  "description": "Chapter 05 - Money transfer with transactions",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
     "package": "npm run build && cd dist && zip -r ../function.zip .",
-    "deploy": "aws lambda update-function-code --function-name ch05 --zip-file fileb://function.zip"
+    "deploy": "aws lambda update-function-code --function-name ch04 --zip-file fileb://function.zip"
   },
   "dependencies": {
     "@types/aws-lambda": "^8.10.0",

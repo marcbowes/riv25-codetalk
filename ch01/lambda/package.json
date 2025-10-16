@@ -1,18 +1,20 @@
 {
-  "name": "ch01",
-  "version": "1.0.0",
-  "description": "Chapter 01 - Basic Lambda function",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "clean": "rm -rf dist",
-    "package": "npm run build && cd dist && zip -r ../function.zip .",
-    "deploy": "aws lambda update-function-code --function-name ch01 --zip-file fileb://function.zip"
-  },
-  "dependencies": {
-    "@types/aws-lambda": "^8.10.0"
-  },
-  "devDependencies": {
-    "typescript": "^5.0.0"
-  }
+    "name": "ch01-lambda",
+    "version": "1.0.0",
+    "description": "Lambda function for DAT401 demo",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "clean": "rm -rf dist"
+    },
+    "dependencies": {
+        "pg": "^8.11.3",
+        "@aws-sdk/dsql-signer": "^3.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "@types/aws-lambda": "^8.10.0",
+        "@types/pg": "^8.10.0",
+        "typescript": "^5.3.0"
+    }
 }

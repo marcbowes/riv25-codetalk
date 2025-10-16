@@ -3,8 +3,8 @@ import { DsqlSigner } from '@aws-sdk/dsql-signer';
 import postgres, { Sql, PostgresError } from 'postgres';
 
 interface Request {
-  payer_id: string;  // UUID
-  payee_id: string;  // UUID
+  payer_id: number;
+  payee_id: number;
   amount: string;
 }
 
@@ -63,7 +63,7 @@ function isOccError(error: any): boolean {
 async function executeTransfer(sql: Sql, request: Request): Promise<string> {
   // Deduct from payer and check balance
   const payerRows = await sql`
-    UPDATE accounts2
+    UPDATE accounts
     SET balance = balance - ${request.amount}
     WHERE id = ${request.payer_id}
     RETURNING balance
@@ -80,7 +80,7 @@ async function executeTransfer(sql: Sql, request: Request): Promise<string> {
 
   // Add to payee
   const payeeResult = await sql`
-    UPDATE accounts2
+    UPDATE accounts
     SET balance = balance + ${request.amount}
     WHERE id = ${request.payee_id}
   `;

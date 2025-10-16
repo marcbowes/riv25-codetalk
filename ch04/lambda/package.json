@@ -1,14 +1,14 @@
 {
   "name": "ch04",
   "version": "1.0.0",
-  "description": "Chapter 04 - Money transfer with transactions",
+  "description": "Chapter 04 - Connect to DSQL and query",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
     "package": "npm run build && cd dist && zip -r ../function.zip .",
-    "deploy": "aws lambda update-function-code --function-name ch04 --zip-file fileb://function.zip"
+    "deploy": "aws lambda update-function-code --function-name ch03 --zip-file fileb://function.zip"
   },
   "dependencies": {
     "@types/aws-lambda": "^8.10.0",

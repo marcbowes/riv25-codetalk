@@ -1,6 +1,6 @@
 import { Handler } from 'aws-lambda';
 import { DsqlSigner } from '@aws-sdk/dsql-signer';
-import postgres, { Sql, PostgresError } from 'postgres';
+import postgres, { Sql } from 'postgres';
 
 interface Request {
   payer_id: number;
@@ -11,7 +11,6 @@ interface Request {
 interface Response {
   payer_balance: string;
   transaction_time: string;
-  attempts: number;
 }
 
 const CLUSTER_ENDPOINT = process.env.CLUSTER_ENDPOINT || 'YOUR_CLUSTER_ENDPOINT';
@@ -55,43 +54,6 @@ async function getConnection(clusterEndpoint: string, user: string, region: stri
   return cachedClient;
 }
 
-function isOccError(error: any): boolean {
-  // PostgreSQL serialization failure error code
-  return error?.code === '40001';
-}
-
-async function executeTransfer(sql: Sql, request: Request): Promise<string> {
-  // Deduct from payer and check balance
-  const payerRows = await sql`
-    UPDATE accounts
-    SET balance = balance - ${request.amount}
-    WHERE id = ${request.payer_id}
-    RETURNING balance
-  `;
-
-  if (payerRows.length === 0) {
-    throw new Error('Payer account not found');
-  }
-
-  const payerBalance = parseFloat(payerRows[0].balance);
-  if (payerBalance < 0) {
-    throw new Error(`Insufficient balance: ${payerBalance}`);
-  }
-
-  // Add to payee
-  const payeeResult = await sql`
-    UPDATE accounts
-    SET balance = balance + ${request.amount}
-    WHERE id = ${request.payee_id}
-  `;
-
-  if (payeeResult.count !== 1) {
-    throw new Error('Payee account not found');
-  }
-
-  return payerBalance.toString();
-}
-
 export const handler: Handler<Request, Response> = async (event) => {
   const start = Date.now();
 
@@ -102,40 +64,47 @@ export const handler: Handler<Request, Response> = async (event) => {
   try {
     const client = await getConnection(CLUSTER_ENDPOINT, USER, REGION);
 
-    // Retry loop for OCC failures
-    let attempts = 0;
-    let payerBalance: string;
+    // Begin transaction and execute transfer
+    const result = await client.begin(async (sql) => {
+      // Deduct from payer and check balance
+      const payerRows = await sql`
+        UPDATE accounts
+        SET balance = balance - ${event.amount}
+        WHERE id = ${event.payer_id}
+        RETURNING balance
+      `;
 
-    while (true) {
-      attempts++;
-
-      try {
-        // Execute transaction with retry on OCC error
-        payerBalance = await client.begin(async (sql) => {
-          return await executeTransfer(sql, event);
-        });
-
-        // Transaction committed successfully
-        break;
-      } catch (error) {
-        // Check if this is an OCC error (serialization failure)
-        if (isOccError(error)) {
-          // Retry on OCC error
-          continue;
-        }
-
-        // For non-OCC errors, rethrow
-        throw error;
+      if (payerRows.length === 0) {
+        throw new Error('Payer account not found');
       }
-    }
+
+      const payerBalance = parseFloat(payerRows[0].balance);
+      if (payerBalance < 0) {
+        throw new Error(`Insufficient balance: ${payerBalance}`);
+      }
+
+      // Add to payee
+      const payeeResult = await sql`
+        UPDATE accounts
+        SET balance = balance + ${event.amount}
+        WHERE id = ${event.payee_id}
+      `;
+
+      if (payeeResult.count !== 1) {
+        throw new Error('Payee account not found');
+      }
+
+      return {
+        payer_balance: payerBalance.toString()
+      };
+    });
 
     const elapsed = Date.now() - start;
     const transactionTime = `${elapsed.toFixed(3)}ms`;
 
     return {
-      payer_balance: payerBalance,
-      transaction_time: transactionTime,
-      attempts
+      payer_balance: result.payer_balance,
+      transaction_time: transactionTime
     };
 
   } catch (error) {

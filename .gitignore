@@ -1,3 +1,5 @@
 /target/
 .claude/
 /uuids.txt
+node_modules
+cdk.out

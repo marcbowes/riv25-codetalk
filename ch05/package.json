@@ -1,0 +1,18 @@
+{
+  "name": "ch05-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "cdk",
+    "lambda"
+  ],
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.0.0",
+    "@aws-sdk/dsql-signer": "^3.0.0",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

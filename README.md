@@ -2,6 +2,8 @@
 
 In this live coding session, we'll show you how to work with Amazon Aurora DSQL from a developer's perspective. We'll develop a sample application to highlight some of the ways developing for Aurora DSQL is different than PostgreSQL. We'll cover authentication and connection management, optimistic concurrency transaction patterns, primary key selection, analyzing query performance, and best practices.
 
+**Total talk duration:** 45 minutes
+
 ## Prerequisites
 
 - Node.js 20+ and npm
@@ -9,688 +11,351 @@ In this live coding session, we'll show you how to work with Amazon Aurora DSQL 
 - AWS credentials configured
 - PostgreSQL client (`psql`) for database operations
 
-## Project Structure
+## Getting Started
 
-Each chapter (except ch02) contains two subdirectories:
-- `cdk/` - AWS CDK infrastructure code for deploying the Lambda function
-- `lambda/` - Lambda function source code
+Before the session, set up your working directory:
 
-```
-ch01/
-├── cdk/          # CDK app for deploying ch01 Lambda
-└── lambda/       # Lambda function code
-    └── src/
-        └── index.ts
+```sh
+# Copy the starter project to your working directory
+cp -r ch00 my-dsql-app
+cd my-dsql-app
 
-ch03/
-├── cdk/          # CDK app with DSQL permissions
-└── lambda/       # Lambda function code
-    └── src/
-        └── index.ts
+# Install dependencies (includes helper.js dependencies and workspace packages)
+npm install
 ```
 
-## Quick Start
+Deploy the base Lambda function:
 
-To deploy any chapter:
+```sh
+# Bootstrap CDK (only needed once per account and region)
+cd cdk
+npx cdk bootstrap
 
-``` sh
-# Install dependencies
-$ npm install
-
-# Deploy a chapter (e.g., ch01)
-$ cd ch01/cdk
-$ npm run cdk deploy
-
-# For chapters with DSQL (ch03-ch06), provide cluster endpoint
-$ export CLUSTER_ENDPOINT=your-cluster-id.dsql.us-west-2.on.aws
-$ cd ch03/cdk
-$ npm run cdk deploy -- -c clusterEndpoint=$CLUSTER_ENDPOINT
-
-# Test the Lambda function
-$ aws lambda invoke --function-name ch01 --payload '{"name": "reinvent"}' response.json
-$ cat response.json
+# Deploy the stack (~1 minute)
+npx cdk deploy
 ```
 
-## Chapter 01
+Test the Lambda function:
 
-First, we're going to build a Lambda function.
-
-Initialize the project:
-
-``` sh
-# Create project directory
-$ mkdir lambda
-$ cd lambda
-
-# Initialize npm project
-$ npm init -y
-
-# Install dependencies
-$ npm install @types/aws-lambda
-
-# Install dev dependencies
-$ npm install -D typescript @types/node
-
-# Create TypeScript config with proper settings
-$ npx tsc --init \
-  --target ES2022 \
-  --module commonjs \
-  --lib ES2022 \
-  --outDir ./dist \
-  --rootDir ./src \
-  --strict \
-  --esModuleInterop \
-  --skipLibCheck \
-  --forceConsistentCasingInFileNames \
-  --resolveJsonModule \
-  --moduleResolution node
-
-# Create source directory
-$ mkdir src
+```sh
+# From the chapter root
+cd ..
+node helper.js --test-chapter 0
+# Expected: ✅ Chapter 0 test PASSED
 ```
 
-Add build scripts to `package.json`:
+Throughout this session, you'll modify this same project in place. The `ch01`, `ch02`, etc. directories in this repository are self-contained snapshots showing what your code should look like after completing each chapter.
 
-``` json
-{
-  "scripts": {
-    "build": "tsc",
-    "clean": "rm -rf dist"
+## Chapter 01: Create DSQL Cluster and Add IAM Authentication
+
+**Time:** ~10 minutes (including 2 minutes for deployments)
+
+In this chapter, we'll create an Aurora DSQL cluster, demonstrate the importance of IAM permissions, and connect using IAM authentication.
+
+### Step 1: Add DSQL Cluster to CDK Stack
+
+Edit `cdk/lib/dat401-stack.ts` and add the DSQL cluster:
+
+```typescript
+import * as dsql from 'aws-cdk-lib/aws-dsql';
+
+// Inside the constructor, before the Lambda function:
+
+// Create DSQL cluster
+const cluster = new dsql.CfnCluster(this, 'DsqlCluster', {
+  deletionProtectionEnabled: false,
+  tags: [{
+    key: 'Name',
+    value: 'DAT401'
+  }]
+});
+
+// Construct cluster endpoint
+const clusterEndpoint = `${cluster.attrIdentifier}.dsql.${this.region}.on.aws`;
+```
+
+Update the Lambda function environment to include the cluster endpoint:
+
+```typescript
+const lambdaFunction = new nodejs.NodejsFunction(this, 'ReinventDat401Function', {
+  // ... existing config ...
+  environment: {
+    CLUSTER_ENDPOINT: clusterEndpoint
+  },
+```
+
+**Note:** We're intentionally NOT adding IAM permissions yet to demonstrate what happens without them.
+
+### Step 2: Add DSQL Authentication to db.ts
+
+Edit `lambda/src/db.ts` and replace the placeholder password with DSQL IAM authentication:
+
+```typescript
+import { DsqlSigner } from '@aws-sdk/dsql-signer';
+
+export async function getPool(): Promise<Pool> {
+  if (pool) {
+    return pool;
   }
+
+  const clusterEndpoint = process.env.CLUSTER_ENDPOINT!;
+  const region = process.env.AWS_REGION!;
+
+  const signer = new DsqlSigner({
+    hostname: clusterEndpoint,
+    region,
+  });
+
+  pool = new Pool({
+    host: clusterEndpoint,
+    port: 5432,
+    database: 'postgres',
+    user: 'admin',
+    password: async () => await signer.getDbConnectAdminAuthToken(),
+    ssl: true,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+  });
+
+  return pool;
 }
 ```
 
-Create a simple Lambda function that returns a greeting:
+### Step 3: Test Database Connection
 
-``` typescript
-// src/index.ts
+Edit `lambda/src/index.ts` to test the connection. Update the Response interface and handler:
+
+```typescript
 import { Handler } from 'aws-lambda';
+import { getPool } from './db';
 
 interface Request {
   name: string;
 }
 
 interface Response {
-  greeting: string;
+  message: string;  // Changed from 'greeting: string'
 }
 
 export const handler: Handler<Request, Response> = async (event) => {
-  const name = event.name;
+  const pool = await getPool();
+
+  const result = await pool.query('SELECT 1');
 
   return {
-    greeting: `hello ${name}`
+    message: `Hello ${event.name}, connected to DSQL successfully!`
   };
 };
 ```
 
-Build the Lambda function:
+### Step 4: Deploy (First Time)
 
-``` sh
-$ npm run build
+From the `cdk` directory:
+
+```sh
+npx cdk deploy
 ```
 
-Now create a CDK project to deploy the Lambda:
+**During deployment (~1 minute):** Explain how DSQL uses IAM authentication instead of traditional database passwords.
 
-``` sh
-# Go back to parent directory
-$ cd ..
+The deployment will output the `ClusterEndpoint`. Save this value - you'll need it for connecting.
 
-# Create CDK directory
-$ mkdir cdk
-$ cd cdk
+### Step 5: Connect with psql
 
-# Initialize CDK app
-$ npx cdk init app --language typescript
+Connect to your DSQL cluster directly using psql. **Keep this connection open** - you'll need it for Chapter 02.
 
-# Install esbuild for local bundling (avoids Docker)
-$ npm install --save-dev esbuild
-```
-
-Update `lib/cdk-stack.ts` to deploy your Lambda function:
-
-``` typescript
-import * as cdk from 'aws-cdk-lib';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
-import { Construct } from 'constructs';
-import * as path from 'path';
-
-export class CdkStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
-    super(scope, id, props);
-
-    const lambdaFunction = new nodejs.NodejsFunction(this, 'DemoFunction', {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: path.join(__dirname, '../../lambda/src/index.ts'),
-      handler: 'handler',
-      functionName: 'demo',
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 512,
-    });
-
-    new cdk.CfnOutput(this, 'FunctionName', {
-      value: lambdaFunction.functionName,
-      description: 'Lambda Function Name'
-    });
-  }
-}
-```
-
-Update `bin/cdk.ts` to use a unique stack name:
-
-``` typescript
-new CdkStack(app, 'LambdaDemoStack', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION
-  }
-});
-```
-
-Deploy with CDK:
-
-``` sh
-# Bootstrap CDK (only needed once per account/region)
-$ npx cdk bootstrap
-
-# Deploy the stack
-$ npx cdk deploy
-```
-
-Test the Lambda function:
-
-``` sh
-$ aws lambda invoke --function-name demo \
-  --cli-binary-format raw-in-base64-out \
-  --payload '{"name":"reinvent"}' \
-  /tmp/response.json
-$ cat /tmp/response.json
-{"greeting":"hello reinvent"}
-```
-
-## Add Aurora DSQL Cluster
-
-Now let's add a DSQL cluster to the same stack. Update `lib/cdk-stack.ts`:
-
-``` typescript
-import * as cdk from 'aws-cdk-lib';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
-import * as dsql from 'aws-cdk-lib/aws-dsql';  // ← Add this import
-import { Construct } from 'constructs';
-import * as path from 'path';
-
-export class CdkStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
-    super(scope, id, props);
-
-    // Create DSQL cluster
-    const cluster = new dsql.CfnCluster(this, 'DsqlCluster', {
-      deletionProtectionEnabled: false,
-    });
-
-    const lambdaFunction = new nodejs.NodejsFunction(this, 'DemoFunction', {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: path.join(__dirname, '../../lambda/src/index.ts'),
-      handler: 'handler',
-      functionName: 'demo',
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 512,
-    });
-
-    new cdk.CfnOutput(this, 'FunctionName', {
-      value: lambdaFunction.functionName,
-      description: 'Lambda Function Name'
-    });
-
-    new cdk.CfnOutput(this, 'ClusterEndpoint', {
-      value: `${cluster.attrIdentifier}.dsql.${this.region}.on.aws`,
-      description: 'DSQL Cluster Endpoint'
-    });
-
-    new cdk.CfnOutput(this, 'ClusterId', {
-      value: cluster.attrIdentifier,
-      description: 'DSQL Cluster ID'
-    });
-  }
-}
-```
-
-Deploy the updated stack:
-
-``` sh
-$ npx cdk deploy
-```
-
-The deployment will output the cluster endpoint. Save this for connecting later!
-
-## Chapter 02
-
-Create an Aurora DSQL cluster using CDK:
-
-``` sh
-$ mkdir ch02
-$ cd ch02
-$ cdk init app --language typescript
-```
-
-Update the stack to include an Aurora DSQL cluster with no deletion protection:
-
-``` typescript
-import * as cdk from 'aws-cdk-lib';
-import * as dsql from 'aws-cdk-lib/aws-dsql';
-import { Construct } from 'constructs';
-
-export class Ch02Stack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
-    super(scope, id, props);
-
-    const cluster = new dsql.CfnCluster(this, 'DsqlCluster', {
-      deletionProtectionEnabled: false,
-      tags: [{
-        key: 'Name',
-        value: 'ch02'
-      }]
-    });
-
-    new cdk.CfnOutput(this, 'ClusterId', {
-      value: cluster.attrIdentifier,
-      description: 'Aurora DSQL Cluster ID'
-    });
-  }
-}
-```
-
-Deploy the stack:
-
-``` sh
-$ npx cdk deploy --profile YOUR_AWS_PROFILE --region us-west-2
-```
-
-The deployment will output the cluster ID, which you'll need for connecting to the database.
-
-## Chapter 03
-
-We're going to connect to the cluster from our Lambda function. Let's first connect from the command line:
-
-``` sh
+```sh
+# Set environment variables
+export CLUSTER_ENDPOINT=<your-cluster-endpoint-from-output>
+export PGHOST=$CLUSTER_ENDPOINT
 export PGUSER=admin
 export PGDATABASE=postgres
-export PGHOST=YOUR_CLUSTER_ID.dsql.AWS_REGION.on.aws
-export PGPASSWORD=$(aws dsql generate-db-connect-admin-auth-token --host $PGHOST)
+export PGSSLMODE=require
 
+# Generate IAM auth token and connect
+export PGPASSWORD=$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST)
 psql
+
+# Once connected, try some commands:
+postgres=> SELECT 1;
+postgres=> \l  # List databases
+
+# DO NOT QUIT - keep this session open for Chapter 02
 ```
 
-Make a table called `accounts`:
+### Step 6: Test Lambda - Observe Permission Failure
 
-``` sql
-create table accounts (
-  id int primary key,
-  balance numeric
-)
-
-postgres=> \d accounts
-                 Table "public.accounts"
- Column  |     Type      | Collation | Nullable | Default
----------+---------------+-----------+----------+---------
- id      | integer       |           | not null |
- balance | numeric(18,6) |           |          |
-Indexes:
-    "accounts_pkey" PRIMARY KEY, btree_index (id) INCLUDE (balance)
-
-postgres=> insert into accounts (id, balance) values (1, 100);
-INSERT 0 1
+```sh
+node helper.js --test-chapter 1
+# Expected: ❌ Chapter 1 test FAILED with AccessDenied error
 ```
 
-Create a new Lambda function for connecting to Aurora DSQL:
+**Expected error:** The Lambda will fail because it doesn't have permission to connect to DSQL. The helper will detect this is expected at Step 5.
 
-``` sh
-$ mkdir -p ch03/src
-$ cd ch03
+**During error discussion (~1 min):** Explain that DSQL requires explicit IAM permissions, unlike traditional databases where you just need credentials.
+
+### Step 7: Add IAM Permissions
+
+Edit `cdk/lib/dat401-stack.ts` and add the import:
+
+```typescript
+import * as iam from 'aws-cdk-lib/aws-iam';
 ```
 
-Install dependencies:
+After the Lambda function definition, add:
 
-``` sh
-$ npm install @aws-sdk/dsql-signer postgres
-$ npm install -D @types/node typescript
+```typescript
+// Add DSQL DbConnectAdmin permission
+lambdaFunction.addToRolePolicy(new iam.PolicyStatement({
+  effect: iam.Effect.ALLOW,
+  actions: ['dsql:DbConnectAdmin'],
+  resources: [cluster.attrResourceArn]
+}));
 ```
 
-Create the connection code using `postgres-js` and the AWS DSQL Signer:
+### Step 8: Deploy (Second Time)
 
-``` typescript
-// src/index.ts
-import { Handler } from 'aws-lambda';
-import { DsqlSigner } from '@aws-sdk/dsql-signer';
-import postgres from 'postgres';
-
-interface Request {
-  id: number;
-}
-
-interface Response {
-  balance: string;
-}
-
-const CLUSTER_ENDPOINT = process.env.CLUSTER_ENDPOINT || 'YOUR_CLUSTER_ENDPOINT';
-const REGION = process.env.REGION || 'us-west-2';
-const USER = 'admin';
-
-async function getPasswordToken(clusterEndpoint: string, user: string, region: string): Promise<string> {
-  const signer = new DsqlSigner({
-    hostname: clusterEndpoint,
-    region,
-  });
-
-  if (user === 'admin') {
-    return await signer.getDbConnectAdminAuthToken();
-  } else {
-    signer.username = user;
-    return await signer.getDbConnectAuthToken();
-  }
-}
-
-async function getConnection(clusterEndpoint: string, user: string, region: string) {
-  const client = postgres({
-    host: clusterEndpoint,
-    user: user,
-    password: async () => await getPasswordToken(clusterEndpoint, user, region),
-    database: 'postgres',
-    port: 5432,
-    idle_timeout: 2,
-    ssl: {
-      rejectUnauthorized: true,
-    }
-  });
-
-  return client;
-}
-
-export const handler: Handler<Request, Response> = async (event) => {
-  let client;
-
-  try {
-    client = await getConnection(CLUSTER_ENDPOINT, USER, REGION);
-
-    const rows = await client`
-      SELECT balance FROM accounts WHERE id = ${event.id}
-    `;
-
-    if (rows.length === 0) {
-      throw new Error(`Account ${event.id} not found`);
-    }
-
-    const balance = rows[0].balance;
-
-    return {
-      balance: balance.toString()
-    };
-  } catch (error) {
-    console.error('Error:', error);
-    throw error;
-  } finally {
-    await client?.end();
-  }
-};
+```sh
+npx cdk deploy
 ```
 
-Build and deploy the function:
+**During deployment (~1 minute):** Explain the IAM policy grants the Lambda's execution role permission to connect to this specific DSQL cluster.
 
-``` sh
-$ npm run build
-$ npm run package
-$ aws lambda update-function-code --function-name ch03 --zip-file fileb://function.zip
-$ aws lambda invoke --function-name ch03 --payload '{"id": 1}' response.json
+### Step 9: Test - Success
+
+```sh
+node helper.js --test-chapter 1
+# Expected: ✅ Chapter 1 test PASSED
 ```
 
-**Note:** After deploying Lambda functions that connect to DSQL, you'll need to add IAM permissions using the `add-dsql-permissions.sh` script:
+**Reference:** See `ch01/` directory for the complete implementation.
 
-``` sh
-$ ./add-dsql-permissions.sh ch03
+## Chapter 02: Switch from Admin to Application Role
+
+**Time:** ~5 minutes
+
+In this chapter, we'll create a dedicated database role for our application instead of using the admin role. This demonstrates best practices for least-privilege access.
+
+### Step 1: Create Application Role in PostgreSQL
+
+In your psql session from Chapter 01 (which should still be open), create a new role for your application:
+
+```sql
+-- Create the myapp role
+CREATE ROLE myapp WITH LOGIN;
+
+-- Grant read and write permissions
+GRANT ALL ON ALL TABLES IN SCHEMA public TO myapp;
 ```
 
-## Chapter 04
+You should see `myapp` listed in the roles.
 
-Now we'll implement a money transfer function with transactions. This chapter demonstrates connection reuse and transaction safety.
+### Step 2: Authorize Lambda to Use myapp Role
 
-### Step 1: Reuse the connection
-
-Instead of creating a new connection for each invocation, we'll create a cached connection that gets reused across Lambda invocations. This significantly improves performance by avoiding connection overhead.
-
-Store the connection in a module-level variable:
-
-``` typescript
-// Connection reuse - create once and reuse across invocations
-let cachedClient: Sql | null = null;
-
-async function getConnection(clusterEndpoint: string, user: string, region: string): Promise<Sql> {
-  if (cachedClient) {
-    return cachedClient;
-  }
-
-  cachedClient = postgres({
-    // ... connection config
-  });
-
-  return cachedClient;
-}
+Copy the `LambdaRoleArn` from your CDK deployment output (from Chapter 01 Step 8). It looks like:
+```
+ReinventDat401Stack.LambdaRoleArn = arn:aws:iam::123456789012:role/ReinventDat401Stack-ReinventDat401FunctionServi-XXXXXXXXXXXX
 ```
 
-### Step 2: Change the API types
-
-Update the request to accept transfer parameters and the response to return transaction results:
-
-``` typescript
-interface Request {
-  payer_id: number;
-  payee_id: number;
-  amount: string;
-}
-
-interface Response {
-  payer_balance: string;
-  transaction_time: string;
-}
+If you lost it, you can retrieve it with:
+```sh
+aws cloudformation describe-stacks --stack-name ReinventDat401Stack \
+  --query "Stacks[0].Outputs[?OutputKey=='LambdaRoleArn'].OutputValue" \
+  --output text
 ```
 
-### Step 3: Implement the transaction
+Back in your psql session, authorize the Lambda role to connect as `myapp`:
 
-The transfer uses a PostgreSQL transaction with safety checks:
+```sql
+-- Replace the ARN with your actual LambdaRoleArn from the CDK output
+AWS IAM GRANT myapp TO 'arn:aws:iam::123456789012:role/ReinventDat401Stack-ReinventDat401FunctionServi-XXXXXXXXXXXX';
 
-``` typescript
-// Begin transaction and execute transfer
-const result = await client.begin(async (sql) => {
-  // Deduct from payer and check balance
-  const payerRows = await sql`
-    UPDATE accounts
-    SET balance = balance - ${event.amount}
-    WHERE id = ${event.payer_id}
-    RETURNING balance
-  `;
+-- Verify the authorization
+SELECT * FROM aws_dsql.list_iam_principal_database_role_authorizations();
+```
 
-  if (payerRows.length === 0) {
-    throw new Error('Payer account not found');
-  }
+### Step 3: Update Lambda to Use myapp User
 
-  const payerBalance = parseFloat(payerRows[0].balance);
-  if (payerBalance < 0) {
-    throw new Error(`Insufficient balance: ${payerBalance}`);
-  }
+Edit `lambda/src/db.ts` and change the user from `admin` to `myapp`:
 
-  // Add to payee
-  const payeeResult = await sql`
-    UPDATE accounts
-    SET balance = balance + ${event.amount}
-    WHERE id = ${event.payee_id}
-  `;
-
-  if (payeeResult.count !== 1) {
-    throw new Error('Payee account not found');
-  }
-
-  return {
-    payer_balance: payerBalance.toString()
-  };
+```typescript
+pool = new Pool({
+  host: clusterEndpoint,
+  port: 5432,
+  database: 'postgres',
+  user: 'myapp',  // Changed from 'admin'
+  password: async () => await signer.getDbConnectAuthToken(),  // Changed from getDbConnectAdminAuthToken()
+  ssl: true,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 ```
 
-**Safety checks:**
-- Check that exactly 1 row was updated for the payee (validates payee exists)
-- Check that the payer's balance is not negative after the deduction
-- If either check fails, throw an error and the transaction is automatically rolled back
-- Use `Date.now()` to measure the transaction duration
+### Step 4: Update IAM Permissions
 
-### Step 4: Populate the database
+Edit `cdk/lib/dat401-stack.ts` and update the IAM policy to use `DbConnect` instead of `DbConnectAdmin`:
 
-Use the `setup.sql` script to create test data:
-
-``` sql
-DELETE FROM accounts;
-
-INSERT INTO accounts (id, balance)
-SELECT generate_series(1, 1000), 100;
+```typescript
+// Add DSQL DbConnect permission for myapp role
+lambdaFunction.addToRolePolicy(new iam.PolicyStatement({
+  effect: iam.Effect.ALLOW,
+  actions: ['dsql:DbConnect'],  // Changed from DbConnectAdmin
+  resources: [cluster.attrResourceArn]
+}));
 ```
 
-This creates 1000 accounts (IDs 1-1000), each with a balance of 100.
+### Step 5: Deploy
 
-Run the script:
-
-``` sh
-$ psql < ch04/setup.sql
+```sh
+cd cdk
+npx cdk deploy
 ```
 
-Deploy and test:
+**During deployment (~1 minute):** Explain how this demonstrates least-privilege access - the Lambda can only connect as `myapp`, not as `admin`.
 
-``` sh
-$ cd ch04
-$ npm run build
-$ npm run package
-$ aws lambda update-function-code --function-name ch04 --zip-file fileb://function.zip
-$ ./add-dsql-permissions.sh ch04
-$ aws lambda invoke --function-name ch04 --payload '{"payer_id": 1, "payee_id": 2, "amount": "10"}' response.json
+### Step 6: Test
+
+```sh
+node helper.js --test-chapter 2
+# Expected: ✅ Chapter 2 test PASSED
 ```
 
-## Chapter 05
+The Lambda is now connecting with the `myapp` role instead of `admin`, following the principle of least privilege.
 
-Chapter 05 extends ch04 by adding automatic retry logic for optimistic concurrency control (OCC) failures. When multiple transactions conflict, DSQL returns a serialization failure error, and the application should retry the transaction.
+**Reference:** See `ch02/` directory for the complete implementation.
 
-### Key Changes from Chapter 04
+## Project Structure
 
-1. **Automatic OCC retry** - Transactions that fail with serialization errors (code `40001`) are automatically retried
-2. **Attempts tracking** - The response includes an `attempts` field showing how many tries were needed
-3. **Clean separation** - `executeTransfer` function contains transaction logic, retry loop handles OCC errors at commit time
+Each chapter is a self-contained workspace with:
+- `package.json` - Workspace configuration with helper.js dependencies
+- `helper.js` - Testing and setup utility
+- `cdk/` - AWS CDK infrastructure code for deploying the Lambda function
+- `lambda/` - Lambda function source code
 
-The retry logic uses an infinite loop that only retries on serialization failures:
-
-``` typescript
-// Retry loop for OCC failures
-let attempts = 0;
-let payerBalance: string;
-
-while (true) {
-  attempts++;
-
-  try {
-    // Execute transaction with retry on OCC error
-    payerBalance = await client.begin(async (sql) => {
-      return await executeTransfer(sql, event);
-    });
-
-    // Transaction committed successfully
-    break;
-  } catch (error) {
-    // Check if this is an OCC error (serialization failure)
-    if (isOccError(error)) {
-      // Retry on OCC error
-      continue;
-    }
-
-    // For non-OCC errors, rethrow
-    throw error;
-  }
-}
 ```
+ch00/
+├── package.json  # Workspace config with dependencies
+├── helper.js     # Testing utility
+├── cdk/          # Base CDK app with Lambda (no DSQL yet)
+└── lambda/       # Lambda function code
+    └── src/
+        └── index.ts
 
-OCC detection checks the PostgreSQL error code:
+ch01/
+├── package.json  # Workspace config with dependencies
+├── helper.js     # Testing utility
+├── cdk/          # CDK app with DSQL cluster and IAM auth
+└── lambda/       # Lambda function code
+    └── src/
+        └── index.ts
 
-``` typescript
-function isOccError(error: any): boolean {
-  // PostgreSQL serialization failure error code
-  return error?.code === '40001';
-}
-```
-
-Deploy and test:
-
-``` sh
-$ cd ch05
-$ npm run build
-$ npm run package
-$ aws lambda update-function-code --function-name ch05 --zip-file fileb://function.zip
-$ ./add-dsql-permissions.sh ch05
-$ aws lambda invoke --function-name ch05 --payload '{"payer_id": 1, "payee_id": 2, "amount": "10"}' response.json
-```
-
-## Chapter 06
-
-Chapter 06 extends ch05 by switching from integer account IDs to UUIDs, which will scale better.
-
-### Key Changes from Chapter 05
-
-1. **UUID primary keys** - Uses `UUID` type with `gen_random_uuid()` default
-2. **String UUIDs** - Request struct uses string type for UUID fields
-3. **New table** - Creates `accounts2` table with UUID IDs
-
-### Database Setup
-
-The `setup.sh` script creates the database and loads accounts with UUIDs:
-
-``` sh
-# Setup with default (1 thread)
-$ ./ch06/setup.sh --endpoint YOUR_CLUSTER_ENDPOINT
-
-# Setup with multiple threads for faster loading
-$ ./ch06/setup.sh --endpoint YOUR_CLUSTER_ENDPOINT --threads 8
-```
-
-The script:
-- Creates the `accounts2` table with UUID primary keys
-- Runs 1000 transactions, each inserting 1000 accounts (1M accounts total)
-- Saves all generated UUIDs to `uuids.txt` for load testing
-- Supports `--threads` for parallel loading with proper cleanup on ctrl-c
-- Uses separate worker files to prevent concurrent write corruption
-
-Database schema:
-
-``` sql
-CREATE TABLE accounts2 (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    balance DECIMAL NOT NULL
-);
-```
-
-### Code Changes
-
-The Request interface now uses string for UUID fields:
-
-``` typescript
-interface Request {
-  payer_id: string;  // UUID
-  payee_id: string;  // UUID
-  amount: string;
-}
-```
-
-The UUIDs are passed as strings and postgres-js handles the conversion automatically.
-
-Deploy and test:
-
-``` sh
-$ cd ch06
-$ npm run build
-$ npm run package
-$ aws lambda update-function-code --function-name ch06 --zip-file fileb://function.zip
-$ ./add-dsql-permissions.sh ch06
-$ aws lambda invoke --function-name ch06 --payload '{"payer_id": "123e4567-e89b-12d3-a456-426614174000", "payee_id": "123e4567-e89b-12d3-a456-426614174001", "amount": "10"}' response.json
+ch02/
+├── package.json  # Workspace config with dependencies
+├── helper.js     # Testing utility
+├── cdk/          # CDK app with DbConnect permission for myapp
+└── lambda/       # Lambda function code using myapp role
+    └── src/
+        └── index.ts
 ```

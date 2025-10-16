@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
-import { Ch01Stack } from '../lib/ch01-stack';
+import { Dat401Stack } from '../lib/dat401-stack';
 
 const app = new cdk.App();
-new Ch01Stack(app, 'Ch01Stack', {
+new Dat401Stack(app, 'ReinventDat401Stack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION

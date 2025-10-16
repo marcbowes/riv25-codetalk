@@ -1,24 +1,18 @@
 import { Handler } from 'aws-lambda';
 import { DsqlSigner } from '@aws-sdk/dsql-signer';
-import postgres, { Sql } from 'postgres';
+import postgres from 'postgres';
 
 interface Request {
-  payer_id: number;
-  payee_id: number;
-  amount: string;
+  id: number;
 }
 
 interface Response {
-  payer_balance: string;
-  transaction_time: string;
+  balance: string;
 }
 
 const CLUSTER_ENDPOINT = process.env.CLUSTER_ENDPOINT || 'YOUR_CLUSTER_ENDPOINT';
 const REGION = process.env.REGION || 'us-west-2';
 const USER = 'admin';
-
-// Connection reuse - create once and reuse across invocations
-let cachedClient: Sql | null = null;
 
 async function getPasswordToken(clusterEndpoint: string, user: string, region: string): Promise<string> {
   const signer = new DsqlSigner({
@@ -34,12 +28,8 @@ async function getPasswordToken(clusterEndpoint: string, user: string, region: s
   }
 }
 
-async function getConnection(clusterEndpoint: string, user: string, region: string): Promise<Sql> {
-  if (cachedClient) {
-    return cachedClient;
-  }
-
-  cachedClient = postgres({
+async function getConnection(clusterEndpoint: string, user: string, region: string) {
+  const client = postgres({
     host: clusterEndpoint,
     user: user,
     password: async () => await getPasswordToken(clusterEndpoint, user, region),
@@ -51,64 +41,32 @@ async function getConnection(clusterEndpoint: string, user: string, region: stri
     }
   });
 
-  return cachedClient;
+  return client;
 }
 
 export const handler: Handler<Request, Response> = async (event) => {
-  const start = Date.now();
-
-  if (event.payer_id === event.payee_id) {
-    throw new Error('Payer and payee must be different accounts');
-  }
+  let client;
 
   try {
-    const client = await getConnection(CLUSTER_ENDPOINT, USER, REGION);
+    client = await getConnection(CLUSTER_ENDPOINT, USER, REGION);
 
-    // Begin transaction and execute transfer
-    const result = await client.begin(async (sql) => {
-      // Deduct from payer and check balance
-      const payerRows = await sql`
-        UPDATE accounts
-        SET balance = balance - ${event.amount}
-        WHERE id = ${event.payer_id}
-        RETURNING balance
-      `;
+    const rows = await client`
+      SELECT balance FROM accounts WHERE id = ${event.id}
+    `;
 
-      if (payerRows.length === 0) {
-        throw new Error('Payer account not found');
-      }
+    if (rows.length === 0) {
+      throw new Error(`Account ${event.id} not found`);
+    }
 
-      const payerBalance = parseFloat(payerRows[0].balance);
-      if (payerBalance < 0) {
-        throw new Error(`Insufficient balance: ${payerBalance}`);
-      }
-
-      // Add to payee
-      const payeeResult = await sql`
-        UPDATE accounts
-        SET balance = balance + ${event.amount}
-        WHERE id = ${event.payee_id}
-      `;
-
-      if (payeeResult.count !== 1) {
-        throw new Error('Payee account not found');
-      }
-
-      return {
-        payer_balance: payerBalance.toString()
-      };
-    });
-
-    const elapsed = Date.now() - start;
-    const transactionTime = `${elapsed.toFixed(3)}ms`;
+    const balance = rows[0].balance;
 
     return {
-      payer_balance: result.payer_balance,
-      transaction_time: transactionTime
+      balance: balance.toString()
     };
-
   } catch (error) {
     console.error('Error:', error);
     throw error;
+  } finally {
+    await client?.end();
   }
 };
