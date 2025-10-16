@@ -84,9 +84,56 @@ const lambdaFunction = new nodejs.NodejsFunction(this, 'ReinventDat401Function',
   },
 ```
 
+Add outputs at the end of the constructor:
+
+```typescript
+// Output the cluster endpoint for easy access
+new cdk.CfnOutput(this, 'ClusterEndpoint', {
+  value: clusterEndpoint,
+  description: 'DSQL Cluster Endpoint'
+});
+
+// Output the Lambda execution role ARN
+new cdk.CfnOutput(this, 'LambdaRoleArn', {
+  value: lambdaFunction.role!.roleArn,
+  description: 'Lambda Execution Role ARN'
+});
+```
+
 **Note:** We're intentionally NOT adding IAM permissions yet to demonstrate what happens without them.
 
-### Step 2: Add DSQL Authentication to db.ts
+Deploy from the `cdk` directory:
+
+```sh
+npx cdk deploy
+```
+
+**During deployment (~1 minute):** Explain that we're creating the DSQL cluster. The deployment will output the `ClusterEndpoint` and `LambdaRoleArn`.
+
+### Step 2: Connect with psql
+
+Connect to your DSQL cluster using the `ClusterEndpoint` from the deployment output. **Keep this connection open** - you'll need it for Chapter 02.
+
+```sh
+# Set environment variables (use the ClusterEndpoint from deployment output)
+export CLUSTER_ENDPOINT=<your-cluster-endpoint-from-output>
+export PGHOST=$CLUSTER_ENDPOINT
+export PGUSER=admin
+export PGDATABASE=postgres
+export PGSSLMODE=require
+
+# Generate IAM auth token and connect
+export PGPASSWORD=$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST)
+psql
+
+# Once connected, try some commands:
+postgres=> SELECT 1;
+postgres=> \l  # List databases
+
+# DO NOT QUIT - keep this session open for Chapter 02
+```
+
+### Step 3: Add DSQL Authentication to db.ts
 
 Edit `lambda/src/db.ts` and replace the placeholder password with DSQL IAM authentication:
 
@@ -122,7 +169,7 @@ export async function getPool(): Promise<Pool> {
 }
 ```
 
-### Step 3: Test Database Connection
+### Step 4: Test Database Connection
 
 Edit `lambda/src/index.ts` to test the connection. Update the Response interface and handler:
 
@@ -135,7 +182,7 @@ interface Request {
 }
 
 interface Response {
-  message: string;  // Changed from 'greeting: string'
+  greeting: string;
 }
 
 export const handler: Handler<Request, Response> = async (event) => {
@@ -144,12 +191,12 @@ export const handler: Handler<Request, Response> = async (event) => {
   const result = await pool.query('SELECT 1');
 
   return {
-    message: `Hello ${event.name}, connected to DSQL successfully!`
+    greeting: `Hello ${event.name}, connected to DSQL successfully!`
   };
 };
 ```
 
-### Step 4: Deploy (First Time)
+### Step 5: Deploy Lambda Changes
 
 From the `cdk` directory:
 
@@ -157,32 +204,7 @@ From the `cdk` directory:
 npx cdk deploy
 ```
 
-**During deployment (~1 minute):** Explain how DSQL uses IAM authentication instead of traditional database passwords.
-
-The deployment will output the `ClusterEndpoint`. Save this value - you'll need it for connecting.
-
-### Step 5: Connect with psql
-
-Connect to your DSQL cluster directly using psql. **Keep this connection open** - you'll need it for Chapter 02.
-
-```sh
-# Set environment variables
-export CLUSTER_ENDPOINT=<your-cluster-endpoint-from-output>
-export PGHOST=$CLUSTER_ENDPOINT
-export PGUSER=admin
-export PGDATABASE=postgres
-export PGSSLMODE=require
-
-# Generate IAM auth token and connect
-export PGPASSWORD=$(aws dsql generate-db-connect-admin-auth-token --hostname $PGHOST)
-psql
-
-# Once connected, try some commands:
-postgres=> SELECT 1;
-postgres=> \l  # List databases
-
-# DO NOT QUIT - keep this session open for Chapter 02
-```
+**During deployment (~1 minute):** Explain how DSQL uses IAM authentication instead of traditional database passwords to generate temporary tokens.
 
 ### Step 6: Test Lambda - Observe Permission Failure
 
@@ -191,7 +213,7 @@ node helper.js --test-chapter 1
 # Expected: ❌ Chapter 1 test FAILED with AccessDenied error
 ```
 
-**Expected error:** The Lambda will fail because it doesn't have permission to connect to DSQL. The helper will detect this is expected at Step 5.
+**Expected error:** The Lambda will fail because it doesn't have permission to connect to DSQL. The helper will detect this is expected at Step 6.
 
 **During error discussion (~1 min):** Explain that DSQL requires explicit IAM permissions, unlike traditional databases where you just need credentials.
 
@@ -214,7 +236,7 @@ lambdaFunction.addToRolePolicy(new iam.PolicyStatement({
 }));
 ```
 
-### Step 8: Deploy (Second Time)
+### Step 8: Deploy with Permissions
 
 ```sh
 npx cdk deploy
@@ -253,7 +275,7 @@ You should see `myapp` listed in the roles.
 
 ### Step 2: Authorize Lambda to Use myapp Role
 
-Copy the `LambdaRoleArn` from your CDK deployment output (from Chapter 01 Step 8). It looks like:
+Copy the `LambdaRoleArn` from your CDK deployment output (from Chapter 01 Step 1). It looks like:
 ```
 ReinventDat401Stack.LambdaRoleArn = arn:aws:iam::123456789012:role/ReinventDat401Stack-ReinventDat401FunctionServi-XXXXXXXXXXXX
 ```

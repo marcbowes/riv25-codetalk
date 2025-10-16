@@ -6,7 +6,7 @@ interface Request {
 }
 
 interface Response {
-  message: string;
+  greeting: string;
 }
 
 export const handler: Handler<Request, Response> = async (event) => {
@@ -15,6 +15,6 @@ export const handler: Handler<Request, Response> = async (event) => {
   const result = await pool.query('SELECT 1');
 
   return {
-    message: `Hello ${event.name}, connected to DSQL successfully!`
+    greeting: `Hello ${event.name}, connected to DSQL successfully!`
   };
 };

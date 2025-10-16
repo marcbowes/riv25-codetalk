@@ -170,12 +170,12 @@ async function testChapter1() {
 
     console.log('Response:', JSON.stringify(responsePayload, null, 2));
 
-    if (responsePayload.message?.includes('connected to DSQL successfully')) {
+    if (responsePayload.greeting?.includes('connected to DSQL successfully')) {
       console.log('✅ Chapter 1 test PASSED');
     } else if (responsePayload.errorMessage) {
       console.log('❌ Chapter 1 test FAILED with error:', responsePayload.errorMessage);
       if (responsePayload.errorMessage.includes('AccessDenied')) {
-        console.log('   This is expected if IAM permissions are not yet added (Step 5)');
+        console.log('   This is expected if IAM permissions are not yet added (Step 6)');
       }
     } else {
       console.log('❌ Chapter 1 test FAILED - unexpected response');
@@ -205,7 +205,7 @@ async function testChapter2() {
 
     console.log('Response:', JSON.stringify(responsePayload, null, 2));
 
-    if (responsePayload.message?.includes('connected to DSQL successfully')) {
+    if (responsePayload.greeting?.includes('connected to DSQL successfully')) {
       console.log('✅ Chapter 2 test PASSED');
     } else if (responsePayload.errorMessage) {
       console.log('❌ Chapter 2 test FAILED with error:', responsePayload.errorMessage);
