@@ -17,7 +17,7 @@ Before the session, set up your working directory:
 
 ```sh
 # Copy the starter project to your working directory
-cp -r ch00 my-dsql-app
+cp -r starter-kit my-dsql-app
 cd my-dsql-app
 
 # Install dependencies (includes helper.js dependencies and workspace packages)
@@ -503,7 +503,7 @@ Each chapter is a self-contained workspace with:
 - `lambda/` - Lambda function source code
 
 ```
-ch00/
+starter-kit/
 ├── package.json  # Workspace config with dependencies
 ├── helper.js     # Testing utility
 ├── cdk/          # Base CDK app with Lambda (no DSQL yet)

@@ -17,14 +17,14 @@ This chapter sets up the base infrastructure that should be deployed **before th
 
 ### Reproduction Steps
 
-These are the exact commands used to create the ch00 structure:
+These are the exact commands used to create the starter-kit:
 
 ### 1. Create Lambda Directory
 
 ```sh
 # Create directory structure
-mkdir -p ch00/lambda/src
-cd ch00/lambda
+mkdir -p starter-kit/lambda/src
+cd starter-kit/lambda
 
 # Initialize npm project
 npm init -y
@@ -64,7 +64,7 @@ Add build scripts to `lambda/package.json`:
 ### 2. Create CDK Directory
 
 ```sh
-# Go to ch00 root
+# Go to starter-kit root
 cd ..
 
 # Create and initialize CDK app
@@ -86,7 +86,7 @@ See the actual files in this directory for the complete implementation.
 
 ### 4. Deploy
 
-From the `ch00/cdk` directory:
+From the `starter-kit/cdk` directory:
 
 ```sh
 # Bootstrap CDK (only needed once per account and region)
@@ -114,7 +114,7 @@ cat /tmp/response.json
 ### File Structure
 
 ```
-ch00/
+starter-kit/
 ├── lambda/
 │   ├── package.json
 │   ├── tsconfig.json
@@ -123,9 +123,9 @@ ch00/
 │       └── db.ts          # Connection module (pg Pool, no DSQL auth)
 └── cdk/
     ├── bin/
-    │   └── ch00-cdk.ts    # CDK app entry
+    │   └── cdk.ts    # CDK app entry
     ├── lib/
-    │   └── ch00-stack.ts  # Stack definition (Lambda only)
+    │   └── cdk-stack.ts  # Stack definition (Lambda only)
     ├── cdk.json
     ├── package.json
     └── tsconfig.json

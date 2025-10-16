@@ -1,5 +1,5 @@
 {
-  "name": "ch00-workspace",
+  "name": "starter-kit-workspace",
   "version": "1.0.0",
   "private": true,
   "workspaces": [

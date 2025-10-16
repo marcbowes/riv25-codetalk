@@ -170,12 +170,12 @@ async function testChapter1() {
 
     console.log('Response:', JSON.stringify(responsePayload, null, 2));
 
-    if (responsePayload.message?.includes('connected to DSQL successfully')) {
+    if (responsePayload.greeting?.includes('connected to DSQL successfully')) {
       console.log('✅ Chapter 1 test PASSED');
     } else if (responsePayload.errorMessage) {
       console.log('❌ Chapter 1 test FAILED with error:', responsePayload.errorMessage);
       if (responsePayload.errorMessage.includes('AccessDenied')) {
-        console.log('   This is expected if IAM permissions are not yet added (Step 5)');
+        console.log('   This is expected if IAM permissions are not yet added (Step 6)');
       }
     } else {
       console.log('❌ Chapter 1 test FAILED - unexpected response');
@@ -205,7 +205,7 @@ async function testChapter2() {
 
     console.log('Response:', JSON.stringify(responsePayload, null, 2));
 
-    if (responsePayload.message?.includes('connected to DSQL successfully')) {
+    if (responsePayload.greeting?.includes('connected to DSQL successfully')) {
       console.log('✅ Chapter 2 test PASSED');
     } else if (responsePayload.errorMessage) {
       console.log('❌ Chapter 2 test FAILED with error:', responsePayload.errorMessage);
@@ -217,6 +217,42 @@ async function testChapter2() {
     }
   } catch (err) {
     console.error('❌ Chapter 2 test FAILED:', err.message);
+  }
+}
+
+async function testChapter3() {
+  console.log('Testing Chapter 3: Money transfer');
+  console.log();
+
+  const payload = { payer_id: 1, payee_id: 2, amount: 10 };
+  console.log(`Invoking Lambda function '${FUNCTION_NAME}' with payload '${JSON.stringify(payload)}'`);
+
+  const client = new LambdaClient({});
+
+  try {
+    const command = new InvokeCommand({
+      FunctionName: FUNCTION_NAME,
+      Payload: JSON.stringify(payload)
+    });
+
+    const response = await client.send(command);
+    const responsePayload = JSON.parse(Buffer.from(response.Payload).toString());
+
+    console.log('Response:', JSON.stringify(responsePayload, null, 2));
+
+    if (typeof responsePayload.balance === 'number') {
+      console.log('✅ Chapter 3 test PASSED');
+      console.log(`   Payer balance after transfer: ${responsePayload.balance}`);
+    } else if (responsePayload.errorMessage) {
+      console.log('❌ Chapter 3 test FAILED with error:', responsePayload.errorMessage);
+      if (responsePayload.errorMessage.includes('Insufficient balance')) {
+        console.log('   Account may have insufficient funds. Check account balances.');
+      }
+    } else {
+      console.log('❌ Chapter 3 test FAILED - unexpected response');
+    }
+  } catch (err) {
+    console.error('❌ Chapter 3 test FAILED:', err.message);
   }
 }
 
@@ -240,6 +276,135 @@ function randomFloat(min, max) {
 
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function testChapter4() {
+  console.log('Testing Chapter 4: Stress Test - 1M Invocations (1000 parallel x 1000 iterations)');
+  console.log();
+
+  const NUM_ACCOUNTS = 1000;
+  const PARALLEL_CALLS = 1000;
+  const ITERATIONS = 10;
+  const TOTAL_CALLS = PARALLEL_CALLS * ITERATIONS;
+
+  console.log(`Total invocations: ${TOTAL_CALLS.toLocaleString()}`);
+  console.log(`Parallel requests per batch: ${PARALLEL_CALLS.toLocaleString()}`);
+  console.log(`Number of batches: ${ITERATIONS.toLocaleString()}`);
+  console.log();
+
+  const client = new LambdaClient({});
+
+  // Track stats
+  const stats = {
+    success: 0,
+    errors: 0,
+    totalDuration: 0,
+    minDuration: Infinity,
+    maxDuration: 0,
+    errorTypes: {}
+  };
+
+  const startTime = Date.now();
+
+  for (let iteration = 0; iteration < ITERATIONS; iteration++) {
+    const promises = [];
+
+    // Create 1000 parallel invocations
+    for (let i = 0; i < PARALLEL_CALLS; i++) {
+      // Pick two random accounts
+      const payerId = randomInt(1, NUM_ACCOUNTS);
+      let payeeId = randomInt(1, NUM_ACCOUNTS);
+      while (payeeId === payerId) {
+        payeeId = randomInt(1, NUM_ACCOUNTS);
+      }
+
+      const payload = {
+        payer_id: payerId,
+        payee_id: payeeId,
+        amount: 1
+      };
+
+      const command = new InvokeCommand({
+        FunctionName: FUNCTION_NAME,
+        Payload: JSON.stringify(payload)
+      });
+
+      const promise = client.send(command)
+        .then(response => {
+          const responsePayload = JSON.parse(Buffer.from(response.Payload).toString());
+
+          if (responsePayload.error) {
+            stats.errors++;
+            const errorType = responsePayload.error;
+            stats.errorTypes[errorType] = (stats.errorTypes[errorType] || 0) + 1;
+          } else {
+            stats.success++;
+          }
+
+          if (responsePayload.duration !== undefined) {
+            stats.totalDuration += responsePayload.duration;
+            stats.minDuration = Math.min(stats.minDuration, responsePayload.duration);
+            stats.maxDuration = Math.max(stats.maxDuration, responsePayload.duration);
+          }
+        })
+        .catch(err => {
+          stats.errors++;
+          const errorType = err.message || 'Unknown error';
+          stats.errorTypes[errorType] = (stats.errorTypes[errorType] || 0) + 1;
+        });
+
+      promises.push(promise);
+    }
+
+    // Wait for all promises in this batch to complete
+    await Promise.all(promises);
+
+    // Print a dot for each batch (every 1000 calls)
+    process.stdout.write('.');
+
+    // Print detailed progress every 100 batches (every 100,000 calls)
+    if ((iteration + 1) % 100 === 0) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      const progress = ((iteration + 1) / ITERATIONS * 100).toFixed(1);
+      const completed = (iteration + 1) * PARALLEL_CALLS;
+      console.log(`\n${progress}% (${completed.toLocaleString()}/${TOTAL_CALLS.toLocaleString()} calls) - Elapsed: ${elapsed}s`);
+    }
+  }
+
+  const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+  const callsPerSecond = (TOTAL_CALLS / totalElapsed).toFixed(0);
+
+  // Print summary
+  console.log();
+  console.log('='.repeat(60));
+  console.log('STATS');
+  console.log('='.repeat(60));
+  console.log(`Total calls:        ${TOTAL_CALLS.toLocaleString()}`);
+  console.log(`Successful:         ${stats.success.toLocaleString()} (${(stats.success / TOTAL_CALLS * 100).toFixed(2)}%)`);
+  console.log(`Errors:             ${stats.errors.toLocaleString()} (${(stats.errors / TOTAL_CALLS * 100).toFixed(2)}%)`);
+  console.log();
+  console.log(`Total time:         ${totalElapsed}s`);
+  console.log(`Throughput:         ${callsPerSecond} calls/second`);
+  console.log();
+
+  if (stats.success > 0) {
+    const avgDuration = stats.totalDuration / stats.success;
+    console.log('Lambda Execution Times:');
+    console.log(`  Min:                ${stats.minDuration.toFixed(2)}ms`);
+    console.log(`  Max:                ${stats.maxDuration.toFixed(2)}ms`);
+    console.log(`  Avg:                ${avgDuration.toFixed(2)}ms`);
+    console.log();
+  }
+
+  if (Object.keys(stats.errorTypes).length > 0) {
+    console.log('Error Breakdown:');
+    for (const [errorType, count] of Object.entries(stats.errorTypes).sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${errorType}: ${count.toLocaleString()}`);
+    }
+    console.log();
+  }
+
+  console.log('✅ Chapter 4 test complete');
 }
 
 async function runInvocations(client, threadId, start, end, total, numAccounts, stats, uuids) {
@@ -394,6 +559,10 @@ async function main() {
       await testChapter1();
     } else if (args.testChapter === 2) {
       await testChapter2();
+    } else if (args.testChapter === 3) {
+      await testChapter3();
+    } else if (args.testChapter === 4) {
+      await testChapter4();
     } else {
       console.error(`Unknown test chapter: ${args.testChapter}`);
       process.exit(1);
