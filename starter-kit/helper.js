@@ -359,17 +359,20 @@ async function testChapter4() {
     // Wait for all promises in this batch to complete
     await Promise.all(promises);
 
-    // Print a dot for each batch (every 1000 calls)
-    process.stdout.write('.');
+    // Print real-time progress (updates the same line)
+    const completed = (iteration + 1) * PARALLEL_CALLS;
+    const progress = ((iteration + 1) / ITERATIONS * 100).toFixed(0);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const rate = (completed / parseFloat(elapsed)).toFixed(0);
+    const successRate = (stats.success + stats.errors > 0) ?
+      ((stats.success / (stats.success + stats.errors)) * 100).toFixed(1) : '0.0';
 
-    // Print detailed progress every 100 batches (every 100,000 calls)
-    if ((iteration + 1) % 100 === 0) {
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      const progress = ((iteration + 1) / ITERATIONS * 100).toFixed(1);
-      const completed = (iteration + 1) * PARALLEL_CALLS;
-      console.log(`\n${progress}% (${completed.toLocaleString()}/${TOTAL_CALLS.toLocaleString()} calls) - Elapsed: ${elapsed}s`);
-    }
+    // Use \r to overwrite the same line
+    process.stdout.write(`\r[${progress.padStart(3, ' ')}%] ${completed.toString().padStart(6, ' ')}/${TOTAL_CALLS.toString()} calls | ${rate.padStart(4, ' ')} calls/s | Success: ${successRate.padStart(5, ' ')}% | ${elapsed}s`);
   }
+
+  // Print a newline after the loop completes
+  console.log();
 
   const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(2);
   const callsPerSecond = (TOTAL_CALLS / totalElapsed).toFixed(0);
