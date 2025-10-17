@@ -301,6 +301,9 @@ async function testChapter4() {
     totalDuration: 0,
     minDuration: Infinity,
     maxDuration: 0,
+    totalRetries: 0,
+    maxRetries: 0,
+    transactionsWithRetries: 0,
     errorTypes: {}
   };
 
@@ -335,8 +338,10 @@ async function testChapter4() {
 
           if (responsePayload.error) {
             stats.errors++;
-            const errorType = responsePayload.error;
-            stats.errorTypes[errorType] = (stats.errorTypes[errorType] || 0) + 1;
+            const errorKey = responsePayload.errorCode
+              ? `${responsePayload.error} (${responsePayload.errorCode})`
+              : responsePayload.error;
+            stats.errorTypes[errorKey] = (stats.errorTypes[errorKey] || 0) + 1;
           } else {
             stats.success++;
           }
@@ -345,6 +350,16 @@ async function testChapter4() {
             stats.totalDuration += responsePayload.duration;
             stats.minDuration = Math.min(stats.minDuration, responsePayload.duration);
             stats.maxDuration = Math.max(stats.maxDuration, responsePayload.duration);
+          }
+
+          // Track retries
+          if (responsePayload.retries !== undefined) {
+            const retries = responsePayload.retries;
+            stats.totalRetries += retries;
+            stats.maxRetries = Math.max(stats.maxRetries, retries);
+            if (retries > 0) {
+              stats.transactionsWithRetries++;
+            }
           }
         })
         .catch(err => {
@@ -396,6 +411,18 @@ async function testChapter4() {
     console.log(`  Min:                ${stats.minDuration.toFixed(2)}ms`);
     console.log(`  Max:                ${stats.maxDuration.toFixed(2)}ms`);
     console.log(`  Avg:                ${avgDuration.toFixed(2)}ms`);
+    console.log();
+  }
+
+  // Display retry statistics
+  if (stats.totalRetries > 0) {
+    const avgRetries = stats.totalRetries / TOTAL_CALLS;
+    const retryRate = (stats.transactionsWithRetries / TOTAL_CALLS * 100).toFixed(2);
+    console.log('OCC Retry Statistics:');
+    console.log(`  Total retries:      ${stats.totalRetries.toLocaleString()}`);
+    console.log(`  Max retries:        ${stats.maxRetries}`);
+    console.log(`  Avg retries/call:   ${avgRetries.toFixed(2)}`);
+    console.log(`  Transactions with retries: ${stats.transactionsWithRetries.toLocaleString()} (${retryRate}%)`);
     console.log();
   }
 

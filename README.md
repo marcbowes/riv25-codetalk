@@ -494,6 +494,241 @@ You should see the updated balances reflecting the transfers.
 
 **Reference:** See `ch03/` directory for the complete implementation.
 
+## Chapter 04: Handling Optimistic Concurrency Control (OCC)
+
+**Time:** ~10 minutes
+
+In this chapter, we'll run a stress test to observe how Aurora DSQL handles high concurrency with optimistic concurrency control (OCC), then implement retry logic to handle transaction conflicts.
+
+### Step 1: Run the Initial Stress Test
+
+The helper script includes a stress test that makes 10,000 API calls (1,000 parallel requests × 10 batches), randomly transferring $1 between accounts:
+
+```sh
+node helper.js --test-chapter 4
+```
+
+You should see real-time progress and a summary like this:
+
+```
+Testing Chapter 4: Stress Test - 1M Invocations (1000 parallel x 1000 iterations)
+
+Total invocations: 10,000
+Parallel requests per batch: 1,000
+Number of batches: 10
+
+[100%]  10000/10000 calls |  909 calls/s | Success:  93.4% | 11.0s
+
+============================================================
+STATS
+============================================================
+Total calls:        10,000
+Successful:         9,344 (93.44%)
+Errors:             656 (6.56%)
+
+Total time:         11.01s
+Throughput:         908 calls/second
+
+Lambda Execution Times:
+  Min:                9.00ms
+  Max:                663.00ms
+  Avg:                20.12ms
+
+Error Breakdown:
+  change conflicts with another transaction, please retry: (OC000) (40001): 656
+
+✅ Chapter 4 test complete
+```
+
+**Key observations:**
+- **Success rate (~93%)**: Most transactions complete successfully on first attempt
+- **OCC conflicts (~7%)**: Under high concurrency, about 7% of transactions fail with error code `40001`
+- **High throughput**: DSQL handles ~900 concurrent requests/second efficiently
+- **Low latency**: Average execution time is ~20ms despite high concurrency
+
+**What's happening:**
+Aurora DSQL uses optimistic concurrency control (OCC). When multiple transactions try to update the same rows simultaneously, DSQL detects conflicts and rejects some transactions with PostgreSQL error code **`40001`** (serialization failure). This is expected behavior - your application **must** implement retry logic to handle these conflicts.
+
+### Step 2: Implement Retry Logic
+
+Edit `lambda/src/index.ts` to add automatic retry logic for OCC conflicts:
+
+```typescript
+interface Response {
+  balance?: number;
+  error?: string;
+  duration: number;
+  retries?: number;  // Add retry tracking
+}
+
+function isOccError(error: any): boolean {
+  // Check for PostgreSQL serialization failure (DSQL OCC error)
+  return error?.code === '40001';
+}
+
+async function performTransfer(
+  client: any,
+  payerId: number,
+  payeeId: number,
+  amount: number
+): Promise<number> {
+  // Begin transaction
+  await client.query('BEGIN');
+
+  // Deduct from payer
+  const deductResult = await client.query(
+    'UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance',
+    [amount, payerId]
+  );
+
+  if (deductResult.rows.length === 0) {
+    throw new Error('Payer account not found');
+  }
+
+  const payerBalance = deductResult.rows[0].balance;
+
+  if (payerBalance < 0) {
+    throw new Error('Insufficient balance');
+  }
+
+  // Add to payee
+  const addResult = await client.query(
+    'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
+    [amount, payeeId]
+  );
+
+  if (addResult.rowCount === 0) {
+    throw new Error('Payee account not found');
+  }
+
+  // Commit transaction
+  await client.query('COMMIT');
+
+  return payerBalance;
+}
+
+export const handler: Handler<Request, Response> = async (event) => {
+  const startTime = Date.now();
+  const pool = await getPool();
+  const client = await pool.connect();
+
+  let retryCount = 0;
+
+  try {
+    // Retry loop for OCC conflicts - retry indefinitely
+    while (true) {
+      try {
+        const balance = await performTransfer(
+          client,
+          event.payer_id,
+          event.payee_id,
+          event.amount
+        );
+
+        const duration = Date.now() - startTime;
+        return {
+          balance,
+          duration,
+          retries: retryCount
+        };
+      } catch (error) {
+        // Rollback on any error
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          // Ignore rollback errors
+        }
+
+        // Check if it's an OCC error - if so, retry
+        if (isOccError(error)) {
+          retryCount++;
+          continue;
+        }
+
+        // If not an OCC error, return the error
+        const duration = Date.now() - startTime;
+        return {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          duration,
+          retries: retryCount
+        };
+      }
+    }
+  } finally {
+    client.release();
+  }
+};
+```
+
+Key changes:
+- **Error detection**: Check for PostgreSQL error code `40001` (serialization failure)
+- **Infinite retry loop**: Continue retrying OCC conflicts until success
+- **No backoff**: Keep it simple - retry immediately
+- **Retry tracking**: Count and return the number of retries for observability
+
+### Step 3: Deploy
+
+```sh
+cd cdk
+npx cdk deploy
+```
+
+### Step 4: Run the Test Again
+
+```sh
+node helper.js --test-chapter 4
+```
+
+Now you should see **100% success rate** with retry statistics:
+
+```
+Testing Chapter 4: Stress Test - 1M Invocations (1000 parallel x 1000 iterations)
+
+Total invocations: 10,000
+Parallel requests per batch: 1,000
+Number of batches: 10
+
+[100%]  10000/10000 calls |  935 calls/s | Success: 100.0% | 10.7s
+
+============================================================
+STATS
+============================================================
+Total calls:        10,000
+Successful:         10,000 (100.00%)
+Errors:             0 (0.00%)
+
+Total time:         10.74s
+Throughput:         931 calls/second
+
+Lambda Execution Times:
+  Min:                12.00ms
+  Max:                555.00ms
+  Avg:                19.29ms
+
+OCC Retry Statistics:
+  Total retries:      735
+  Max retries:        4
+  Avg retries/call:   0.07
+  Transactions with retries: 642 (6.42%)
+
+✅ Chapter 4 test complete
+```
+
+**Key differences after implementing retries:**
+- ✅ **100% success rate** - All transactions complete successfully (up from ~93%)
+- ✅ **0 errors** - OCC conflicts are automatically handled (down from ~7% errors)
+- ✅ **735 total retries** - The Lambda automatically retried 735 times across all calls
+- ✅ **6.42% retry rate** - About 642 transactions (6.42%) needed at least one retry
+- ✅ **Max 4 retries** - Even under high contention, most conflicts resolve within a few retries
+
+**Production best practices:**
+- Always implement retry logic for error code `40001` in DSQL applications
+- Consider adding exponential backoff for very high contention scenarios
+- Monitor retry rates to detect hot spots in your data model
+- Most transactions (93.58%) succeed on the first attempt
+
+**Reference:** See `ch04/` directory for the complete implementation.
+
 ## Project Structure
 
 Each chapter is a self-contained workspace with:
@@ -532,6 +767,14 @@ ch03/
 ├── helper.js     # Testing utility
 ├── cdk/          # CDK app unchanged from ch02
 └── lambda/       # Lambda function with money transfer API
+    └── src/
+        └── index.ts
+
+ch04/
+├── package.json  # Workspace config with dependencies
+├── helper.js     # Testing utility with stress test
+├── cdk/          # CDK app unchanged from ch03
+└── lambda/       # Lambda function with error tracking and duration reporting
     └── src/
         └── index.ts
 ```
