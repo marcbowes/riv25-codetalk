@@ -294,7 +294,7 @@ Back in your psql session, authorize the Lambda role to connect as `myapp`:
 AWS IAM GRANT myapp TO 'arn:aws:iam::123456789012:role/ReinventDat401Stack-ReinventDat401FunctionServi-XXXXXXXXXXXX';
 
 -- Verify the authorization
-SELECT * FROM aws_dsql.list_iam_principal_database_role_authorizations();
+SELECT * FROM sys.iam_pg_role_mappings;
 ```
 
 ### Step 3: Update Lambda to Use myapp User
@@ -465,7 +465,14 @@ npx cdk deploy
 
 ### Step 5: Test the Transfer
 
-Test a transfer from account 1 to account 2 using the helper:
+In your psql session from Chapter 01 (which should still be open), grant permissions on the new table `accounts` to `myapp` role:
+
+```sql
+-- Grant read and write permissions
+GRANT ALL ON public.accounts TO myapp;
+```
+
+Then, test a transfer from account 1 to account 2 using the helper:
 
 ```sh
 node helper.js --test-chapter 3
