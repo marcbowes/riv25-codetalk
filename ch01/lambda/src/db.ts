@@ -1,5 +1,5 @@
-import { Pool } from 'pg';
-import { DsqlSigner } from '@aws-sdk/dsql-signer';
+import { Pool } from "pg";
+import { DsqlSigner } from "@aws-sdk/dsql-signer";
 
 let pool: Pool | null = null;
 
@@ -19,8 +19,8 @@ export async function getPool(): Promise<Pool> {
   pool = new Pool({
     host: clusterEndpoint,
     port: 5432,
-    database: 'postgres',
-    user: 'admin',
+    database: "postgres",
+    user: "admin",
     password: async () => await signer.getDbConnectAdminAuthToken(),
     ssl: true,
     max: 20,

@@ -57,17 +57,19 @@ In this chapter, we'll create an Aurora DSQL cluster, demonstrate the importance
 Edit `cdk/lib/dat401-stack.ts` and add the DSQL cluster:
 
 ```typescript
-import * as dsql from 'aws-cdk-lib/aws-dsql';
+import * as dsql from "aws-cdk-lib/aws-dsql";
 
 // Inside the constructor, before the Lambda function:
 
 // Create DSQL cluster
-const cluster = new dsql.CfnCluster(this, 'DsqlCluster', {
+const cluster = new dsql.CfnCluster(this, "DsqlCluster", {
   deletionProtectionEnabled: false,
-  tags: [{
-    key: 'Name',
-    value: 'DAT401'
-  }]
+  tags: [
+    {
+      key: "Name",
+      value: "DAT401",
+    },
+  ],
 });
 
 // Construct cluster endpoint
@@ -88,15 +90,15 @@ Add outputs at the end of the constructor:
 
 ```typescript
 // Output the cluster endpoint for easy access
-new cdk.CfnOutput(this, 'ClusterEndpoint', {
+new cdk.CfnOutput(this, "ClusterEndpoint", {
   value: clusterEndpoint,
-  description: 'DSQL Cluster Endpoint'
+  description: "DSQL Cluster Endpoint",
 });
 
 // Output the Lambda execution role ARN
-new cdk.CfnOutput(this, 'LambdaRoleArn', {
+new cdk.CfnOutput(this, "LambdaRoleArn", {
   value: lambdaFunction.role!.roleArn,
-  description: 'Lambda Execution Role ARN'
+  description: "Lambda Execution Role ARN",
 });
 ```
 
@@ -138,7 +140,7 @@ postgres=> \l  # List databases
 Edit `lambda/src/db.ts` and replace the placeholder password with DSQL IAM authentication:
 
 ```typescript
-import { DsqlSigner } from '@aws-sdk/dsql-signer';
+import { DsqlSigner } from "@aws-sdk/dsql-signer";
 
 export async function getPool(): Promise<Pool> {
   if (pool) {
@@ -156,8 +158,8 @@ export async function getPool(): Promise<Pool> {
   pool = new Pool({
     host: clusterEndpoint,
     port: 5432,
-    database: 'postgres',
-    user: 'admin',
+    database: "postgres",
+    user: "admin",
     password: async () => await signer.getDbConnectAdminAuthToken(),
     ssl: true,
     max: 20,
@@ -174,8 +176,8 @@ export async function getPool(): Promise<Pool> {
 Edit `lambda/src/index.ts` to test the connection. Update the Response interface and handler:
 
 ```typescript
-import { Handler } from 'aws-lambda';
-import { getPool } from './db';
+import { Handler } from "aws-lambda";
+import { getPool } from "./db";
 
 interface Request {
   name: string;
@@ -188,10 +190,10 @@ interface Response {
 export const handler: Handler<Request, Response> = async (event) => {
   const pool = await getPool();
 
-  const result = await pool.query('SELECT 1');
+  const result = await pool.query("SELECT 1");
 
   return {
-    greeting: `Hello ${event.name}, connected to DSQL successfully!`
+    greeting: `Hello ${event.name}, connected to DSQL successfully!`,
   };
 };
 ```
@@ -222,18 +224,20 @@ node helper.js --test-chapter 1
 Edit `cdk/lib/dat401-stack.ts` and add the import:
 
 ```typescript
-import * as iam from 'aws-cdk-lib/aws-iam';
+import * as iam from "aws-cdk-lib/aws-iam";
 ```
 
 After the Lambda function definition, add:
 
 ```typescript
 // Add DSQL DbConnectAdmin permission
-lambdaFunction.addToRolePolicy(new iam.PolicyStatement({
-  effect: iam.Effect.ALLOW,
-  actions: ['dsql:DbConnectAdmin'],
-  resources: [cluster.attrResourceArn]
-}));
+lambdaFunction.addToRolePolicy(
+  new iam.PolicyStatement({
+    effect: iam.Effect.ALLOW,
+    actions: ["dsql:DbConnectAdmin"],
+    resources: [cluster.attrResourceArn],
+  }),
+);
 ```
 
 ### Step 8: Deploy with Permissions
@@ -276,11 +280,13 @@ You should see `myapp` listed in the roles.
 ### Step 2: Authorize Lambda to Use myapp Role
 
 Copy the `LambdaRoleArn` from your CDK deployment output (from Chapter 01 Step 1). It looks like:
+
 ```
 ReinventDat401Stack.LambdaRoleArn = arn:aws:iam::123456789012:role/ReinventDat401Stack-ReinventDat401FunctionServi-XXXXXXXXXXXX
 ```
 
 If you lost it, you can retrieve it with:
+
 ```sh
 aws cloudformation describe-stacks --stack-name ReinventDat401Stack \
   --query "Stacks[0].Outputs[?OutputKey=='LambdaRoleArn'].OutputValue" \
@@ -305,9 +311,9 @@ Edit `lambda/src/db.ts` and change the user from `admin` to `myapp`:
 pool = new Pool({
   host: clusterEndpoint,
   port: 5432,
-  database: 'postgres',
-  user: 'myapp',  // Changed from 'admin'
-  password: async () => await signer.getDbConnectAuthToken(),  // Changed from getDbConnectAdminAuthToken()
+  database: "postgres",
+  user: "myapp", // Changed from 'admin'
+  password: async () => await signer.getDbConnectAuthToken(), // Changed from getDbConnectAdminAuthToken()
   ssl: true,
   max: 20,
   idleTimeoutMillis: 30000,
@@ -321,11 +327,13 @@ Edit `cdk/lib/dat401-stack.ts` and update the IAM policy to use `DbConnect` inst
 
 ```typescript
 // Add DSQL DbConnect permission for myapp role
-lambdaFunction.addToRolePolicy(new iam.PolicyStatement({
-  effect: iam.Effect.ALLOW,
-  actions: ['dsql:DbConnect'],  // Changed from DbConnectAdmin
-  resources: [cluster.attrResourceArn]
-}));
+lambdaFunction.addToRolePolicy(
+  new iam.PolicyStatement({
+    effect: iam.Effect.ALLOW,
+    actions: ["dsql:DbConnect"], // Changed from DbConnectAdmin
+    resources: [cluster.attrResourceArn],
+  }),
+);
 ```
 
 ### Step 5: Deploy
@@ -406,42 +414,42 @@ export const handler: Handler<Request, Response> = async (event) => {
 
   try {
     // Begin transaction
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
     // Deduct from payer
     const deductResult = await client.query(
-      'UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance',
-      [event.amount, event.payer_id]
+      "UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance",
+      [event.amount, event.payer_id],
     );
 
     if (deductResult.rows.length === 0) {
-      throw new Error('Payer account not found');
+      throw new Error("Payer account not found");
     }
 
     const payerBalance = deductResult.rows[0].balance;
 
     if (payerBalance < 0) {
-      throw new Error('Insufficient balance');
+      throw new Error("Insufficient balance");
     }
 
     // Add to payee
     const addResult = await client.query(
-      'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
-      [event.amount, event.payee_id]
+      "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+      [event.amount, event.payee_id],
     );
 
     if (addResult.rowCount === 0) {
-      throw new Error('Payee account not found');
+      throw new Error("Payee account not found");
     }
 
     // Commit transaction
-    await client.query('COMMIT');
+    await client.query("COMMIT");
 
     return {
-      balance: payerBalance
+      balance: payerBalance,
     };
   } catch (error) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     throw error;
   } finally {
     client.release();
@@ -450,6 +458,7 @@ export const handler: Handler<Request, Response> = async (event) => {
 ```
 
 This implementation:
+
 - Uses explicit BEGIN/COMMIT/ROLLBACK for transaction control
 - Deducts from payer and returns the new balance
 - Checks for insufficient funds
@@ -548,6 +557,7 @@ Error Breakdown:
 ```
 
 **Key observations:**
+
 - **Success rate (~93%)**: Most transactions complete successfully on first attempt
 - **OCC conflicts (~7%)**: Under high concurrency, about 7% of transactions fail with error code `40001`
 - **High throughput**: DSQL handles ~900 concurrent requests/second efficiently
@@ -565,51 +575,51 @@ interface Response {
   balance?: number;
   error?: string;
   duration: number;
-  retries?: number;  // Add retry tracking
+  retries?: number; // Add retry tracking
 }
 
 function isOccError(error: any): boolean {
   // Check for PostgreSQL serialization failure (DSQL OCC error)
-  return error?.code === '40001';
+  return error?.code === "40001";
 }
 
 async function performTransfer(
   client: any,
   payerId: number,
   payeeId: number,
-  amount: number
+  amount: number,
 ): Promise<number> {
   // Begin transaction
-  await client.query('BEGIN');
+  await client.query("BEGIN");
 
   // Deduct from payer
   const deductResult = await client.query(
-    'UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance',
-    [amount, payerId]
+    "UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance",
+    [amount, payerId],
   );
 
   if (deductResult.rows.length === 0) {
-    throw new Error('Payer account not found');
+    throw new Error("Payer account not found");
   }
 
   const payerBalance = deductResult.rows[0].balance;
 
   if (payerBalance < 0) {
-    throw new Error('Insufficient balance');
+    throw new Error("Insufficient balance");
   }
 
   // Add to payee
   const addResult = await client.query(
-    'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
-    [amount, payeeId]
+    "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+    [amount, payeeId],
   );
 
   if (addResult.rowCount === 0) {
-    throw new Error('Payee account not found');
+    throw new Error("Payee account not found");
   }
 
   // Commit transaction
-  await client.query('COMMIT');
+  await client.query("COMMIT");
 
   return payerBalance;
 }
@@ -629,19 +639,19 @@ export const handler: Handler<Request, Response> = async (event) => {
           client,
           event.payer_id,
           event.payee_id,
-          event.amount
+          event.amount,
         );
 
         const duration = Date.now() - startTime;
         return {
           balance,
           duration,
-          retries: retryCount
+          retries: retryCount,
         };
       } catch (error) {
         // Rollback on any error
         try {
-          await client.query('ROLLBACK');
+          await client.query("ROLLBACK");
         } catch (rollbackError) {
           // Ignore rollback errors
         }
@@ -655,9 +665,9 @@ export const handler: Handler<Request, Response> = async (event) => {
         // If not an OCC error, return the error
         const duration = Date.now() - startTime;
         return {
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : "Unknown error",
           duration,
-          retries: retryCount
+          retries: retryCount,
         };
       }
     }
@@ -668,6 +678,7 @@ export const handler: Handler<Request, Response> = async (event) => {
 ```
 
 Key changes:
+
 - **Error detection**: Check for PostgreSQL error code `40001` (serialization failure)
 - **Infinite retry loop**: Continue retrying OCC conflicts until success
 - **No backoff**: Keep it simple - retry immediately
@@ -722,6 +733,7 @@ OCC Retry Statistics:
 ```
 
 **Key differences after implementing retries:**
+
 - ✅ **100% success rate** - All transactions complete successfully (up from ~93%)
 - ✅ **0 errors** - OCC conflicts are automatically handled (down from ~7% errors)
 - ✅ **735 total retries** - The Lambda automatically retried 735 times across all calls
@@ -729,6 +741,7 @@ OCC Retry Statistics:
 - ✅ **Max 4 retries** - Even under high contention, most conflicts resolve within a few retries
 
 **Production best practices:**
+
 - Always implement retry logic for error code `40001` in DSQL applications
 - Consider adding exponential backoff for very high contention scenarios
 - Monitor retry rates to detect hot spots in your data model
@@ -782,45 +795,45 @@ async function performTransfer(
   client: any,
   payerId: number,
   payeeId: number,
-  amount: number
+  amount: number,
 ): Promise<number> {
   // Begin transaction
-  await client.query('BEGIN');
+  await client.query("BEGIN");
 
   // Deduct from payer
   const deductResult = await client.query(
-    'UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance',
-    [amount, payerId]
+    "UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance",
+    [amount, payerId],
   );
 
   if (deductResult.rows.length === 0) {
-    throw new Error('Payer account not found');
+    throw new Error("Payer account not found");
   }
 
   const payerBalance = deductResult.rows[0].balance;
 
   if (payerBalance < 0) {
-    throw new Error('Insufficient balance');
+    throw new Error("Insufficient balance");
   }
 
   // Add to payee
   const addResult = await client.query(
-    'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
-    [amount, payeeId]
+    "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+    [amount, payeeId],
   );
 
   if (addResult.rowCount === 0) {
-    throw new Error('Payee account not found');
+    throw new Error("Payee account not found");
   }
 
   // Record transaction history
   await client.query(
-    'INSERT INTO transactions (payer_id, payee_id, amount) VALUES ($1, $2, $3)',
-    [payerId, payeeId, amount]
+    "INSERT INTO transactions (payer_id, payee_id, amount) VALUES ($1, $2, $3)",
+    [payerId, payeeId, amount],
   );
 
   // Commit transaction
-  await client.query('COMMIT');
+  await client.query("COMMIT");
 
   return payerBalance;
 }
@@ -867,6 +880,7 @@ Found 5 recent transactions:
 
 **Composite Indexes:**
 The indexes we created are composite indexes that support efficient queries like:
+
 - Finding all transactions for a specific payer within a date range
 - Finding all transactions for a specific payee within a date range
 
@@ -874,14 +888,15 @@ These indexes support queries ordered by date because `created_at` is the second
 
 **Key differences between UUID and Integer primary keys:**
 
-| Aspect | Integer (Sequential) | UUID (Random) |
-|--------|---------------------|---------------|
-| **Distribution** | All writes hit same partition (hotspot) | Evenly distributed across partitions |
-| **Performance** | Can bottleneck under high write load | Scales linearly with write load |
-| **Sortability** | Naturally ordered by insertion time | Random order (use timestamp column if needed) |
-| **Size** | 4 bytes (INT) or 8 bytes (BIGINT) | 16 bytes |
+| Aspect           | Integer (Sequential)                    | UUID (Random)                                 |
+| ---------------- | --------------------------------------- | --------------------------------------------- |
+| **Distribution** | All writes hit same partition (hotspot) | Evenly distributed across partitions          |
+| **Performance**  | Can bottleneck under high write load    | Scales linearly with write load               |
+| **Sortability**  | Naturally ordered by insertion time     | Random order (use timestamp column if needed) |
+| **Size**         | 4 bytes (INT) or 8 bytes (BIGINT)       | 16 bytes                                      |
 
 **For DSQL:**
+
 - ✅ Use **UUIDs** for high-write tables (like transaction logs)
 - ✅ Use **Integers** for reference tables with low write rates (like our accounts table)
 - ✅ The `gen_random_uuid()` function generates v4 UUIDs automatically
@@ -926,6 +941,7 @@ You should see output similar to:
 ```
 
 **Key observations:**
+
 - **B-Tree Scan**: The query is scanning the primary key (UUID) index - this is a **full table scan**, not using our `idx_transactions_payer` composite index
 - **Filters: (payer_id = 1)**: DSQL's pushdown compute engine (PCE) filters rows where `payer_id = 1` during the scan
 - **Rows Filtered: 0**: All 6 rows in the table match the filter (because we only have test data for payer_id = 1)
@@ -969,6 +985,7 @@ node helper.js --test-chapter 6
 ```
 
 This will perform:
+
 - **1,000,000 total Lambda invocations**
 - **10,000 parallel requests** (divided across 50 workers)
 - **100 iterations** per worker
@@ -1014,6 +1031,7 @@ OCC Retry Statistics:
 ```
 
 **Key observations:**
+
 - ✅ **100% success rate** with 1M invocations
 - ✅ **~4,200 calls/second** throughput using 50 workers
 - ✅ **0.66% retry rate** - very low because 1M accounts reduces contention significantly
@@ -1051,6 +1069,7 @@ You should now see the composite index being used:
 ```
 
 **Key differences from Step 1:**
+
 - ✅ **Index Scan Backward using idx_transactions_payer** - Now using the composite index!
 - ✅ **No Sort operation** - The index already provides data in `(payer_id, created_at)` order
 - ✅ **Index Cond: (payer_id = 1)** - The index efficiently filters to just this payer
@@ -1061,11 +1080,13 @@ You should now see the composite index being used:
 
 **Why the index is used now:**
 With ~1M rows in the table, the query optimizer determines that using the composite index is more efficient than scanning all rows. The index allows DSQL to:
+
 1. Quickly locate all transactions for `payer_id = 1`
 2. Return them already sorted by `created_at DESC`
 3. Stop after finding the matching rows (LIMIT 5)
 
 **Performance comparison:**
+
 - **With 6 rows (Step 1)**: Full table scan, 0.679ms execution time
 - **With ~1M rows (Step 4)**: Index scan, 1.630ms execution time
 

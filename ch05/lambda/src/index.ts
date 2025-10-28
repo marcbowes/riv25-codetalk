@@ -1,5 +1,5 @@
-import { Handler } from 'aws-lambda';
-import { getPool } from './db';
+import { Handler } from "aws-lambda";
+import { getPool } from "./db";
 
 interface Request {
   payer_id: number;
@@ -17,52 +17,52 @@ interface Response {
 
 function isOccError(error: any): boolean {
   // Check for DSQL OCC error code (PostgreSQL serialization failure)
-  return error?.code === '40001';
+  return error?.code === "40001";
 }
 
 async function performTransfer(
   client: any,
   payerId: number,
   payeeId: number,
-  amount: number
+  amount: number,
 ): Promise<number> {
   // Begin transaction
-  await client.query('BEGIN');
+  await client.query("BEGIN");
 
   // Deduct from payer
   const deductResult = await client.query(
-    'UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance',
-    [amount, payerId]
+    "UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance",
+    [amount, payerId],
   );
 
   if (deductResult.rows.length === 0) {
-    throw new Error('Payer account not found');
+    throw new Error("Payer account not found");
   }
 
   const payerBalance = deductResult.rows[0].balance;
 
   if (payerBalance < 0) {
-    throw new Error('Insufficient balance');
+    throw new Error("Insufficient balance");
   }
 
   // Add to payee
   const addResult = await client.query(
-    'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
-    [amount, payeeId]
+    "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+    [amount, payeeId],
   );
 
   if (addResult.rowCount === 0) {
-    throw new Error('Payee account not found');
+    throw new Error("Payee account not found");
   }
 
   // Record transaction history
   await client.query(
-    'INSERT INTO transactions (payer_id, payee_id, amount) VALUES ($1, $2, $3)',
-    [payerId, payeeId, amount]
+    "INSERT INTO transactions (payer_id, payee_id, amount) VALUES ($1, $2, $3)",
+    [payerId, payeeId, amount],
   );
 
   // Commit transaction
-  await client.query('COMMIT');
+  await client.query("COMMIT");
 
   return payerBalance;
 }
@@ -82,19 +82,19 @@ export const handler: Handler<Request, Response> = async (event) => {
           client,
           event.payer_id,
           event.payee_id,
-          event.amount
+          event.amount,
         );
 
         const duration = Date.now() - startTime;
         return {
           balance,
           duration,
-          retries: retryCount
+          retries: retryCount,
         };
       } catch (error) {
         // Rollback on any error
         try {
-          await client.query('ROLLBACK');
+          await client.query("ROLLBACK");
         } catch (rollbackError) {
           // Ignore rollback errors
         }
@@ -108,10 +108,10 @@ export const handler: Handler<Request, Response> = async (event) => {
         // If not an OCC error, return the error
         const duration = Date.now() - startTime;
         return {
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : "Unknown error",
           errorCode: error?.code,
           duration,
-          retries: retryCount
+          retries: retryCount,
         };
       }
     }

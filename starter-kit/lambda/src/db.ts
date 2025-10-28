@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool } from "pg";
 
 let pool: Pool | null = null;
 
@@ -10,9 +10,9 @@ export async function getPool(): Promise<Pool> {
   pool = new Pool({
     host: process.env.CLUSTER_ENDPOINT!,
     port: 5432,
-    database: 'postgres',
-    user: 'admin',
-    password: 'placeholder', // TODO: Replace with DSQL auth in Ch01
+    database: "postgres",
+    user: "admin",
+    password: "placeholder", // TODO: Replace with DSQL auth in Ch01
     ssl: true,
     max: 20,
     idleTimeoutMillis: 30000,
