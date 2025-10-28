@@ -518,7 +518,7 @@ node helper.js --test-chapter 4
 You should see real-time progress and a summary like this:
 
 ```
-Testing Chapter 4: Stress Test - 1M Invocations (1000 parallel x 1000 iterations)
+Testing Chapter 4: Stress Test - 10K Invocations (1000 parallel x 10 iterations)
 
 Total invocations: 10,000
 Parallel requests per batch: 1,000
@@ -689,7 +689,7 @@ node helper.js --test-chapter 4
 Now you should see **100% success rate** with retry statistics:
 
 ```
-Testing Chapter 4: Stress Test - 1M Invocations (1000 parallel x 1000 iterations)
+Testing Chapter 4: Stress Test - 10K Invocations (1000 parallel x 10 iterations)
 
 Total invocations: 10,000
 Parallel requests per batch: 1,000
@@ -888,60 +888,187 @@ These indexes support queries ordered by date because `created_at` is the second
 
 **Reference:** See `ch05/` directory for the complete implementation.
 
-## Project Structure
+## Chapter 06: Analyzing Query Performance
 
-Each chapter is a self-contained workspace with:
-- `package.json` - Workspace configuration with helper.js dependencies
-- `helper.js` - Testing and setup utility
-- `cdk/` - AWS CDK infrastructure code for deploying the Lambda function
-- `lambda/` - Lambda function source code
+**Time:** ~10 minutes
+
+In this chapter, we'll learn how to analyze query performance in DSQL using `EXPLAIN ANALYZE`, understand how indexes are used, and optimize query execution.
+
+### Step 1: Analyze a Query with EXPLAIN ANALYZE
+
+Let's analyze how DSQL executes queries using the composite indexes we created in Chapter 5. In your psql session, run:
+
+```sql
+EXPLAIN ANALYZE SELECT id, payer_id, payee_id, amount, created_at
+FROM transactions
+WHERE payer_id = 1
+ORDER BY created_at DESC
+LIMIT 5;
+```
+
+You should see output similar to:
 
 ```
-starter-kit/
-├── package.json  # Workspace config with dependencies
-├── helper.js     # Testing utility
-├── cdk/          # Base CDK app with Lambda (no DSQL yet)
-└── lambda/       # Lambda function code
-    └── src/
-        └── index.ts
-
-ch01/
-├── package.json  # Workspace config with dependencies
-├── helper.js     # Testing utility
-├── cdk/          # CDK app with DSQL cluster and IAM auth
-└── lambda/       # Lambda function code
-    └── src/
-        └── index.ts
-
-ch02/
-├── package.json  # Workspace config with dependencies
-├── helper.js     # Testing utility
-├── cdk/          # CDK app with DbConnect permission for myapp
-└── lambda/       # Lambda function code using myapp role
-    └── src/
-        └── index.ts
-
-ch03/
-├── package.json  # Workspace config with dependencies
-├── helper.js     # Testing utility
-├── cdk/          # CDK app unchanged from ch02
-└── lambda/       # Lambda function with money transfer API
-    └── src/
-        └── index.ts
-
-ch04/
-├── package.json  # Workspace config with dependencies
-├── helper.js     # Testing utility with stress test
-├── cdk/          # CDK app unchanged from ch03
-└── lambda/       # Lambda function with OCC retry logic
-    └── src/
-        └── index.ts
-
-ch05/
-├── package.json  # Workspace config with dependencies
-├── helper.js     # Testing utility
-├── cdk/          # CDK app unchanged from ch04
-└── lambda/       # Lambda function with transaction history tracking (UUID PKs)
-    └── src/
-        └── index.ts
+                                                              QUERY PLAN
+--------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=104.92..104.93 rows=5 width=36) (actual time=0.647..0.649 rows=5 loops=1)
+   ->  Sort  (cost=104.92..104.93 rows=6 width=36) (actual time=0.646..0.647 rows=5 loops=1)
+         Sort Key: created_at DESC
+         Sort Method: quicksort  Memory: 25kB
+         ->  Full Scan (btree-table) on transactions  (cost=100.76..104.84 rows=6 width=36) (actual time=0.578..0.637 rows=6 loops=1)
+               -> Storage Scan on transactions (cost=100.76..104.84 rows=6 width=36) (actual rows=6 loops=1)
+                   Projections: id, payer_id, payee_id, amount, created_at
+                   Filters: (payer_id = 1)
+                   Rows Filtered: 0
+                   -> B-Tree Scan on transactions (cost=100.76..104.84 rows=6 width=36) (actual rows=6 loops=1)
+ Planning Time: 0.121 ms
+ Execution Time: 0.679 ms
 ```
+
+**Key observations:**
+- **B-Tree Scan**: The query is scanning the primary key (UUID) index - this is a **full table scan**, not using our `idx_transactions_payer` composite index
+- **Filters: (payer_id = 1)**: DSQL's pushdown compute engine (PCE) filters rows where `payer_id = 1` during the scan
+- **Rows Filtered: 0**: All 6 rows in the table match the filter (because we only have test data for payer_id = 1)
+- **Sort**: Since the table is ordered by UUID (random), the results must be sorted by `created_at DESC`
+- **Execution Time**: Query completes in ~0.68ms because there are only 6 rows total
+
+**Why isn't the composite index being used?**
+With only 6 rows, DSQL's query optimizer determines that scanning the entire table is faster than using the composite index. This is a good decision by the optimizer - the overhead of index lookups would be more expensive than just scanning 6 rows.
+
+### Step 2: Setup 1M Accounts for Stress Testing
+
+To see the index being used, we need more data. Let's create 1 million accounts:
+
+```sh
+node helper.js --setup-ch06
+```
+
+This command uses 128 parallel worker threads to insert 1M accounts efficiently. You should see progress like:
+
+```
+Setting up Chapter 6: Creating 1M accounts
+
+Current account count: 1,000
+Inserting 999,000 more accounts to reach 1,000,000...
+  [Worker 1] Inserted accounts 1,001 to 8,808
+  [Worker 2] Inserted accounts 8,809 to 16,616
+  ...
+Account insertion complete!
+
+✅ Chapter 6 setup complete
+```
+
+**During setup (~2-3 minutes):** This demonstrates how to efficiently bulk-load data into DSQL using parallel workers and batched inserts.
+
+### Step 3: Run the Extreme Stress Test
+
+Now let's run a 1M invocation stress test using 50 parallel workers:
+
+```sh
+node helper.js --test-chapter 6
+```
+
+This will perform:
+- **1,000,000 total Lambda invocations**
+- **10,000 parallel requests** (divided across 50 workers)
+- **100 iterations** per worker
+- **200 parallel calls per worker** (10,000 ÷ 50)
+
+Expected output:
+
+```
+Testing Chapter 6: Extreme Stress Test - 1M Invocations (10,000 parallel x 100 iterations)
+
+Total invocations: 1,000,000
+Parallel requests per batch: 10,000
+Number of batches: 100
+Number of workers: 50
+
+Starting 50 workers...
+Each worker handles 200 parallel calls per iteration, for 100 iterations
+Created 50 worker(s)
+[100%] 1000000/1,000,000 calls |  4191 calls/s | 238.6s
+
+============================================================
+STATS
+============================================================
+Total calls:        1,000,000
+Successful:         1,000,000 (100.00%)
+Errors:             0 (0.00%)
+
+Total time:         238.57s
+Throughput:         4192 calls/second
+
+Lambda Execution Times:
+  Min:                14.00ms
+  Max:                4283.00ms
+  Avg:                409.45ms
+
+OCC Retry Statistics:
+  Total retries:      6,667
+  Max retries:        2
+  Avg retries/call:   0.01
+  Transactions with retries: 6,584 (0.66%)
+
+✅ Chapter 6 test complete
+```
+
+**Key observations:**
+- ✅ **100% success rate** with 1M invocations
+- ✅ **~4,200 calls/second** throughput using 50 workers
+- ✅ **0.66% retry rate** - very low because 1M accounts reduces contention significantly
+- ✅ **Max 2 retries** - with better data distribution across 1M accounts, OCC conflicts are rare
+- ✅ **Average latency 409ms** - includes time for retries and high concurrency queuing
+
+### Step 4: Verify Index Usage with EXPLAIN ANALYZE
+
+Now with ~1M transactions in the table, let's run the same query again:
+
+```sql
+EXPLAIN ANALYZE SELECT id, payer_id, payee_id, amount, created_at
+FROM transactions
+WHERE payer_id = 1
+ORDER BY created_at DESC
+LIMIT 5;
+```
+
+You should now see the composite index being used:
+
+```
+                                                                       QUERY PLAN
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=100.54..208.56 rows=2 width=36) (actual time=1.578..1.597 rows=3 loops=1)
+   ->  Index Scan Backward using idx_transactions_payer on transactions  (cost=100.54..208.56 rows=2 width=36) (actual time=1.577..1.595 rows=3 loops=1)
+         Index Cond: (payer_id = 1)
+         -> Storage Scan on idx_transactions_payer (cost=100.54..208.56 rows=2 width=36) (actual rows=3 loops=1)
+             -> B-Tree Scan on idx_transactions_payer (cost=100.54..208.56 rows=2 width=36) (actual rows=3 loops=1)
+                 Index Cond: (payer_id = 1)
+         -> Storage Lookup on transactions (cost=100.54..208.56 rows=2 width=36) (actual rows=3 loops=1)
+             Projections: id, payer_id, payee_id, amount, created_at
+             -> B-Tree Lookup on transactions (cost=100.54..208.56 rows=2 width=36) (actual rows=3 loops=1)
+ Planning Time: 0.118 ms
+ Execution Time: 1.630 ms
+```
+
+**Key differences from Step 1:**
+- ✅ **Index Scan Backward using idx_transactions_payer** - Now using the composite index!
+- ✅ **No Sort operation** - The index already provides data in `(payer_id, created_at)` order
+- ✅ **Index Cond: (payer_id = 1)** - The index efficiently filters to just this payer
+- ✅ **Storage Lookup on transactions** - Only fetches the specific rows from the table after using the index
+- ✅ **Planning Time: 0.118ms** - Much faster than before
+- ✅ **Execution Time: 1.630ms** - Still very fast despite ~1M rows in the table
+- ✅ **Found 3 rows** - There are actually 3 transactions where account 1 was the payer
+
+**Why the index is used now:**
+With ~1M rows in the table, the query optimizer determines that using the composite index is more efficient than scanning all rows. The index allows DSQL to:
+1. Quickly locate all transactions for `payer_id = 1`
+2. Return them already sorted by `created_at DESC`
+3. Stop after finding the matching rows (LIMIT 5)
+
+**Performance comparison:**
+- **With 6 rows (Step 1)**: Full table scan, 0.679ms execution time
+- **With ~1M rows (Step 4)**: Index scan, 1.630ms execution time
+
+Even with 166,000x more data, the query is only ~2.4x slower thanks to the composite index! This demonstrates the power of proper indexing in distributed databases.
+
+**Reference:** See `ch05/` directory for the complete implementation (Chapter 6 reuses Chapter 5's Lambda code).
