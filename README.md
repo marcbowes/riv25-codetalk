@@ -736,6 +736,158 @@ OCC Retry Statistics:
 
 **Reference:** See `ch04/` directory for the complete implementation.
 
+## Chapter 05: Primary Key Selection - UUID vs Integer
+
+**Time:** ~5 minutes
+
+In this chapter, we'll add transaction history tracking using UUID primary keys, demonstrating an important consideration for distributed databases like Aurora DSQL.
+
+### Step 1: Create Transaction History Table
+
+In your psql session, create a new table to record transaction history:
+
+```sql
+CREATE TABLE transactions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  payer_id INT,
+  payee_id INT,
+  amount INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Why UUIDs?** In distributed databases like DSQL, UUID primary keys provide better distribution across the cluster compared to sequential integers. Sequential IDs can create hotspots where all inserts hit the same partition.
+
+Grant permissions on the new table to the `myapp` role:
+
+```sql
+GRANT ALL ON public.transactions TO myapp;
+```
+
+Create indexes to enable efficient lookups by payer, payee, and date:
+
+```sql
+CREATE INDEX ASYNC idx_transactions_payer ON transactions(payer_id, created_at);
+CREATE INDEX ASYNC idx_transactions_payee ON transactions(payee_id, created_at);
+```
+
+**About `CREATE INDEX ASYNC`:** DSQL supports asynchronous index creation, which allows you to create indexes without blocking writes to the table. The indexes are built in the background and become available once complete. See the [DSQL CREATE INDEX ASYNC documentation](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/working-with-create-index-async.html) for more details.
+
+### Step 2: Update Lambda to Record Transaction History
+
+Edit `lambda/src/index.ts` and add an INSERT statement to record each transaction:
+
+```typescript
+async function performTransfer(
+  client: any,
+  payerId: number,
+  payeeId: number,
+  amount: number
+): Promise<number> {
+  // Begin transaction
+  await client.query('BEGIN');
+
+  // Deduct from payer
+  const deductResult = await client.query(
+    'UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance',
+    [amount, payerId]
+  );
+
+  if (deductResult.rows.length === 0) {
+    throw new Error('Payer account not found');
+  }
+
+  const payerBalance = deductResult.rows[0].balance;
+
+  if (payerBalance < 0) {
+    throw new Error('Insufficient balance');
+  }
+
+  // Add to payee
+  const addResult = await client.query(
+    'UPDATE accounts SET balance = balance + $1 WHERE id = $2',
+    [amount, payeeId]
+  );
+
+  if (addResult.rowCount === 0) {
+    throw new Error('Payee account not found');
+  }
+
+  // Record transaction history
+  await client.query(
+    'INSERT INTO transactions (payer_id, payee_id, amount) VALUES ($1, $2, $3)',
+    [payerId, payeeId, amount]
+  );
+
+  // Commit transaction
+  await client.query('COMMIT');
+
+  return payerBalance;
+}
+```
+
+The INSERT statement is part of the same transaction, so it will be rolled back if the transfer fails.
+
+### Step 3: Deploy
+
+```sh
+cd cdk
+npx cdk deploy
+```
+
+### Step 4: Test Transaction History
+
+```sh
+node helper.js --test-chapter 5
+```
+
+Expected output:
+
+```
+Testing Chapter 5: Transaction history with UUID primary keys
+
+Invoking Lambda function 'reinvent-dat401' with payload '{"payer_id":1,"payee_id":2,"amount":10}'
+Response: {
+  "balance": 80,
+  "duration": 18,
+  "retries": 0
+}
+
+✅ Transfer successful
+Checking transactions table...
+Found 5 recent transactions:
+  1. ID: a1b2c3d4-e5f6-4789-a012-3456789abcde, Payer: 1, Payee: 2, Amount: 10, Time: 2025-01-15 10:23:45.123
+  2. ID: f1e2d3c4-b5a6-4879-0123-456789abcdef, Payer: 3, Payee: 5, Amount: 10, Time: 2025-01-15 10:23:40.456
+  ...
+
+✅ Chapter 5 test PASSED
+```
+
+### Understanding Indexes and Primary Keys in DSQL
+
+**Composite Indexes:**
+The indexes we created are composite indexes that support efficient queries like:
+- Finding all transactions for a specific payer within a date range
+- Finding all transactions for a specific payee within a date range
+
+These indexes support queries ordered by date because `created_at` is the second column in the index.
+
+**Key differences between UUID and Integer primary keys:**
+
+| Aspect | Integer (Sequential) | UUID (Random) |
+|--------|---------------------|---------------|
+| **Distribution** | All writes hit same partition (hotspot) | Evenly distributed across partitions |
+| **Performance** | Can bottleneck under high write load | Scales linearly with write load |
+| **Sortability** | Naturally ordered by insertion time | Random order (use timestamp column if needed) |
+| **Size** | 4 bytes (INT) or 8 bytes (BIGINT) | 16 bytes |
+
+**For DSQL:**
+- ✅ Use **UUIDs** for high-write tables (like transaction logs)
+- ✅ Use **Integers** for reference tables with low write rates (like our accounts table)
+- ✅ The `gen_random_uuid()` function generates v4 UUIDs automatically
+
+**Reference:** See `ch05/` directory for the complete implementation.
+
 ## Project Structure
 
 Each chapter is a self-contained workspace with:
@@ -781,7 +933,15 @@ ch04/
 ├── package.json  # Workspace config with dependencies
 ├── helper.js     # Testing utility with stress test
 ├── cdk/          # CDK app unchanged from ch03
-└── lambda/       # Lambda function with error tracking and duration reporting
+└── lambda/       # Lambda function with OCC retry logic
+    └── src/
+        └── index.ts
+
+ch05/
+├── package.json  # Workspace config with dependencies
+├── helper.js     # Testing utility
+├── cdk/          # CDK app unchanged from ch04
+└── lambda/       # Lambda function with transaction history tracking (UUID PKs)
     └── src/
         └── index.ts
 ```

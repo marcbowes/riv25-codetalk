@@ -92,8 +92,26 @@ async function setupSchema(numAccounts) {
     `);
     console.log('Created accounts table');
 
+    // Create transactions table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        payer_id INT,
+        payee_id INT,
+        amount INT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('Created transactions table');
+
+    // Create indexes
+    await client.query('CREATE INDEX IF NOT EXISTS idx_transactions_payer ON transactions(payer_id, created_at)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_transactions_payee ON transactions(payee_id, created_at)');
+    console.log('Created indexes');
+
     // Clear existing data
     await client.query('DELETE FROM accounts');
+    await client.query('DELETE FROM transactions');
     console.log('Cleared existing data');
 
     // Insert accounts
@@ -437,6 +455,58 @@ async function testChapter4() {
   console.log('✅ Chapter 4 test complete');
 }
 
+async function testChapter5() {
+  console.log('Testing Chapter 5: Transaction history with UUID primary keys');
+  console.log();
+
+  const payload = { payer_id: 1, payee_id: 2, amount: 10 };
+  console.log(`Invoking Lambda function '${FUNCTION_NAME}' with payload '${JSON.stringify(payload)}'`);
+
+  const lambdaClient = new LambdaClient({});
+
+  try {
+    const command = new InvokeCommand({
+      FunctionName: FUNCTION_NAME,
+      Payload: JSON.stringify(payload)
+    });
+
+    const response = await lambdaClient.send(command);
+    const responsePayload = JSON.parse(Buffer.from(response.Payload).toString());
+
+    console.log('Response:', JSON.stringify(responsePayload, null, 2));
+    console.log();
+
+    if (typeof responsePayload.balance === 'number') {
+      console.log('✅ Transfer successful');
+
+      // Now check the transactions table
+      console.log('Checking transactions table...');
+      const dsqlClient = await getDsqlClient();
+
+      try {
+        const result = await dsqlClient.query(
+          'SELECT id, payer_id, payee_id, amount, created_at FROM transactions ORDER BY created_at DESC LIMIT 5'
+        );
+
+        console.log(`Found ${result.rows.length} recent transactions:`);
+        result.rows.forEach((row, idx) => {
+          console.log(`  ${idx + 1}. ID: ${row.id}, Payer: ${row.payer_id}, Payee: ${row.payee_id}, Amount: ${row.amount}, Time: ${row.created_at}`);
+        });
+        console.log();
+        console.log('✅ Chapter 5 test PASSED');
+      } finally {
+        await dsqlClient.end();
+      }
+    } else if (responsePayload.error) {
+      console.log('❌ Chapter 5 test FAILED with error:', responsePayload.error);
+    } else {
+      console.log('❌ Chapter 5 test FAILED - unexpected response');
+    }
+  } catch (err) {
+    console.error('❌ Chapter 5 test FAILED:', err.message);
+  }
+}
+
 async function runInvocations(client, threadId, start, end, total, numAccounts, stats, uuids) {
   for (let i = start; i <= end; i++) {
     let payerId, payeeId, amount, payerDisplay, payeeDisplay;
@@ -593,6 +663,8 @@ async function main() {
       await testChapter3();
     } else if (args.testChapter === 4) {
       await testChapter4();
+    } else if (args.testChapter === 5) {
+      await testChapter5();
     } else {
       console.error(`Unknown test chapter: ${args.testChapter}`);
       process.exit(1);
