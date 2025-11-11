@@ -1,5 +1,5 @@
 {
-  "name": "ch01-lambda",
+  "name": "ch02-lambda",
   "version": "1.0.0",
   "description": "Lambda function for DAT401 demo",
   "main": "dist/index.js",

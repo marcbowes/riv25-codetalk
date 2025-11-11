@@ -172,7 +172,7 @@ async function setupSchema(numAccounts) {
 }
 
 async function testChapter0() {
-  console.log("Testing Chapter 0: Basic Lambda invocation");
+  console.log("Testing Chapter 0: Basic Lambda invocation with DSQL connection");
   console.log();
 
   const payload = { name: "reinvent" };
@@ -197,8 +197,18 @@ async function testChapter0() {
 
     console.log("Response:", JSON.stringify(responsePayload, null, 2));
 
-    if (responsePayload.greeting === "hello reinvent") {
+    if (responsePayload.greeting?.includes("connected to DSQL successfully")) {
       console.log("✅ Chapter 0 test PASSED");
+    } else if (responsePayload.errorMessage) {
+      console.log(
+        "❌ Chapter 0 test FAILED with error:",
+        responsePayload.errorMessage,
+      );
+      if (responsePayload.errorMessage.includes("not authorized")) {
+        console.log(
+          "   Make sure you authorized the Lambda role with: AWS IAM GRANT myapp TO '<lambda-role-arn>';",
+        );
+      }
     } else {
       console.log("❌ Chapter 0 test FAILED - unexpected response");
     }
@@ -208,99 +218,7 @@ async function testChapter0() {
 }
 
 async function testChapter1() {
-  console.log("Testing Chapter 1: DSQL connection");
-  console.log();
-
-  const payload = { name: "reinvent" };
-  console.log(
-    `Invoking Lambda function '${FUNCTION_NAME}' with payload '${JSON.stringify(
-      payload,
-    )}'`,
-  );
-
-  const client = new LambdaClient({});
-
-  try {
-    const command = new InvokeCommand({
-      FunctionName: FUNCTION_NAME,
-      Payload: JSON.stringify(payload),
-    });
-
-    const response = await client.send(command);
-    const responsePayload = JSON.parse(
-      Buffer.from(response.Payload).toString(),
-    );
-
-    console.log("Response:", JSON.stringify(responsePayload, null, 2));
-
-    if (responsePayload.greeting?.includes("connected to DSQL successfully")) {
-      console.log("✅ Chapter 1 test PASSED");
-    } else if (responsePayload.errorMessage) {
-      console.log(
-        "❌ Chapter 1 test FAILED with error:",
-        responsePayload.errorMessage,
-      );
-      if (responsePayload.errorMessage.includes("AccessDenied")) {
-        console.log(
-          "   This is expected if IAM permissions are not yet added (Step 6)",
-        );
-      }
-    } else {
-      console.log("❌ Chapter 1 test FAILED - unexpected response");
-    }
-  } catch (err) {
-    console.error("❌ Chapter 1 test FAILED:", err.message);
-  }
-}
-
-async function testChapter2() {
-  console.log("Testing Chapter 2: DSQL connection with myapp role");
-  console.log();
-
-  const payload = { name: "reinvent" };
-  console.log(
-    `Invoking Lambda function '${FUNCTION_NAME}' with payload '${JSON.stringify(
-      payload,
-    )}'`,
-  );
-
-  const client = new LambdaClient({});
-
-  try {
-    const command = new InvokeCommand({
-      FunctionName: FUNCTION_NAME,
-      Payload: JSON.stringify(payload),
-    });
-
-    const response = await client.send(command);
-    const responsePayload = JSON.parse(
-      Buffer.from(response.Payload).toString(),
-    );
-
-    console.log("Response:", JSON.stringify(responsePayload, null, 2));
-
-    if (responsePayload.greeting?.includes("connected to DSQL successfully")) {
-      console.log("✅ Chapter 2 test PASSED");
-    } else if (responsePayload.errorMessage) {
-      console.log(
-        "❌ Chapter 2 test FAILED with error:",
-        responsePayload.errorMessage,
-      );
-      if (responsePayload.errorMessage.includes("not authorized")) {
-        console.log(
-          "   Make sure you authorized the Lambda role with: AWS IAM GRANT myapp TO '<lambda-role-arn>';",
-        );
-      }
-    } else {
-      console.log("❌ Chapter 2 test FAILED - unexpected response");
-    }
-  } catch (err) {
-    console.error("❌ Chapter 2 test FAILED:", err.message);
-  }
-}
-
-async function testChapter3() {
-  console.log("Testing Chapter 3: Money transfer");
+  console.log("Testing Chapter 1: Money transfer");
   console.log();
 
   const payload = { payer_id: 1, payee_id: 2, amount: 10 };
@@ -326,13 +244,13 @@ async function testChapter3() {
     console.log("Response:", JSON.stringify(responsePayload, null, 2));
 
     if (typeof responsePayload.balance === "number") {
-      console.log("✅ Chapter 3 test PASSED");
+      console.log("✅ Chapter 1 test PASSED");
       console.log(
         `   Payer balance after transfer: ${responsePayload.balance}`,
       );
     } else if (responsePayload.errorMessage) {
       console.log(
-        "❌ Chapter 3 test FAILED with error:",
+        "❌ Chapter 1 test FAILED with error:",
         responsePayload.errorMessage,
       );
       if (responsePayload.errorMessage.includes("Insufficient balance")) {
@@ -341,10 +259,10 @@ async function testChapter3() {
         );
       }
     } else {
-      console.log("❌ Chapter 3 test FAILED - unexpected response");
+      console.log("❌ Chapter 1 test FAILED - unexpected response");
     }
   } catch (err) {
-    console.error("❌ Chapter 3 test FAILED:", err.message);
+    console.error("❌ Chapter 1 test FAILED:", err.message);
   }
 }
 
@@ -759,9 +677,9 @@ async function runStressTest(config) {
   }
 }
 
-async function testChapter4() {
+async function testChapter2() {
   console.log(
-    "Testing Chapter 4: Stress Test - 10K Invocations (1000 parallel x 10 iterations)",
+    "Testing Chapter 2: Stress Test - 10K Invocations (1000 parallel x 10 iterations)",
   );
   console.log();
 
@@ -771,11 +689,11 @@ async function testChapter4() {
     numAccounts: 1000,
   });
 
-  console.log("✅ Chapter 4 test complete");
+  console.log("✅ Chapter 2 test complete");
 }
 
-async function testChapter5() {
-  console.log("Testing Chapter 5: Transaction history with UUID primary keys");
+async function testChapter3() {
+  console.log("Testing Chapter 3: Transaction history with UUID primary keys");
   console.log();
 
   const payload = { payer_id: 1, payee_id: 2, amount: 10 };
@@ -837,25 +755,25 @@ async function testChapter5() {
           );
         });
         console.log();
-        console.log("✅ Chapter 5 test PASSED");
+        console.log("✅ Chapter 3 test PASSED");
       } finally {
         await dsqlClient.end();
       }
     } else if (responsePayload.error) {
       console.log(
-        "❌ Chapter 5 test FAILED with error:",
+        "❌ Chapter 3 test FAILED with error:",
         responsePayload.error,
       );
     } else {
-      console.log("❌ Chapter 5 test FAILED - unexpected response");
+      console.log("❌ Chapter 3 test FAILED - unexpected response");
     }
   } catch (err) {
-    console.error("❌ Chapter 5 test FAILED:", err.message);
+    console.error("❌ Chapter 3 test FAILED:", err.message);
   }
 }
 
-async function setupChapter6() {
-  console.log("Setting up Chapter 6: Creating 1M accounts");
+async function setupChapter4() {
+  console.log("Setting up Chapter 4: Creating 1M accounts");
   console.log();
 
   const TARGET_ACCOUNTS = 1000000;
@@ -944,12 +862,12 @@ async function setupChapter6() {
     await client.end();
   }
 
-  console.log("✅ Chapter 6 setup complete");
+  console.log("✅ Chapter 4 setup complete");
 }
 
-async function testChapter6() {
+async function testChapter4() {
   console.log(
-    "Testing Chapter 6: Extreme Stress Test - 1M Invocations (10,000 parallel x 100 iterations)",
+    "Testing Chapter 4: Extreme Stress Test - 1M Invocations (10,000 parallel x 100 iterations)",
   );
   console.log();
 
@@ -962,7 +880,7 @@ async function testChapter6() {
     numWorkers: 50,
   });
 
-  console.log("✅ Chapter 6 test complete");
+  console.log("✅ Chapter 4 test complete");
 }
 
 async function runInvocations(
@@ -1137,10 +1055,6 @@ async function main() {
       await testChapter3();
     } else if (args.testChapter === 4) {
       await testChapter4();
-    } else if (args.testChapter === 5) {
-      await testChapter5();
-    } else if (args.testChapter === 6) {
-      await testChapter6();
     } else {
       console.error(`Unknown test chapter: ${args.testChapter}`);
       process.exit(1);
@@ -1148,7 +1062,7 @@ async function main() {
   } else if (args.setup) {
     await setupSchema(args.accounts);
   } else if (args.setupCh06) {
-    await setupChapter6();
+    await setupChapter4();
   } else {
     await runLoadTest(args);
   }

@@ -40,11 +40,11 @@ export class Dat401Stack extends cdk.Stack {
       },
     );
 
-    // Add DSQL DbConnectAdmin permission
+    // Add DSQL DbConnect permission for myapp role
     lambdaFunction.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        actions: ["dsql:DbConnectAdmin"],
+        actions: ["dsql:DbConnect"],
         resources: [cluster.attrResourceArn],
       }),
     );

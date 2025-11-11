@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { DsqlSigner } from "@aws-sdk/dsql-signer";
 
 let pool: Pool | null = null;
 
@@ -7,12 +8,20 @@ export async function getPool(): Promise<Pool> {
     return pool;
   }
 
+  const clusterEndpoint = process.env.CLUSTER_ENDPOINT!;
+  const region = process.env.AWS_REGION!;
+
+  const signer = new DsqlSigner({
+    hostname: clusterEndpoint,
+    region,
+  });
+
   pool = new Pool({
-    host: process.env.CLUSTER_ENDPOINT!,
+    host: clusterEndpoint,
     port: 5432,
     database: "postgres",
-    user: "admin",
-    password: "placeholder", // TODO: Replace with DSQL auth in Ch01
+    user: "myapp",
+    password: async () => await signer.getDbConnectAuthToken(),
     ssl: true,
     max: 20,
     idleTimeoutMillis: 30000,
