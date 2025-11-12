@@ -4,19 +4,18 @@ use crate::lambda::{
 };
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::collections::HashMap;
 use std::time::Instant;
 use tokio::task::JoinSet;
 
 pub async fn run_stress_test(
+    total_calls: usize,
     parallel_calls: usize,
-    iterations: usize,
     num_accounts: u32,
 ) -> Result<()> {
-    let total_calls = parallel_calls * iterations;
-
     println!("Total invocations: {}", total_calls);
-    println!("Parallel requests per batch: {}", parallel_calls);
-    println!("Number of batches: {}\n", iterations);
+    println!("Max parallel requests: {}", parallel_calls);
+    println!();
 
     let pb = ProgressBar::new(total_calls as u64);
     pb.set_style(
@@ -35,29 +34,45 @@ pub async fn run_stress_test(
     let mut total_retries = 0u64;
     let mut max_retries = 0u32;
     let mut transactions_with_retries = 0usize;
+    let mut error_types: HashMap<String, usize> = HashMap::new();
 
-    for _ in 0..iterations {
-        let mut tasks = JoinSet::new();
+    let mut tasks = JoinSet::new();
+    let mut launched = 0;
 
-        for _ in 0..parallel_calls {
-            let payer_id = rand::random::<u32>() % num_accounts + 1;
-            let mut payee_id = rand::random::<u32>() % num_accounts + 1;
-            while payee_id == payer_id {
-                payee_id = rand::random::<u32>() % num_accounts + 1;
+    loop {
+        let rem = parallel_calls - tasks.len();
+        if launched < total_calls && rem > 0 {
+            for _ in 0..rem {
+                let payer_id = rand::random::<u32>() % num_accounts + 1;
+                let mut payee_id = rand::random::<u32>() % num_accounts + 1;
+                while payee_id == payer_id {
+                    payee_id = rand::random::<u32>() % num_accounts + 1;
+                }
+
+                tasks.spawn(invoke_lambda::<_, tpcb::Response>(tpcb::Request {
+                    payer_id,
+                    payee_id,
+                    amount: 1,
+                }));
+                launched += 1;
             }
-
-            tasks.spawn(invoke_lambda::<_, tpcb::Response>(tpcb::Request {
-                payer_id,
-                payee_id,
-                amount: 1,
-            }));
         }
 
-        while let Some(result) = tasks.join_next().await {
+        // As tasks complete, launch new ones to maintain parallelism
+        if let Some(result) = tasks.join_next().await {
+            // Process completed task
             match result {
                 Ok(Ok(response)) => {
-                    if response.error.is_some() {
+                    if let Some(error) = &response.error {
                         errors += 1;
+
+                        // Track error types with code
+                        let error_key = if let Some(code) = &response.error_code {
+                            format!("{} ({})", error, code)
+                        } else {
+                            error.clone()
+                        };
+                        *error_types.entry(error_key).or_insert(0) += 1;
                     } else {
                         success += 1;
                     }
@@ -79,9 +94,18 @@ pub async fn run_stress_test(
                         }
                     }
                 }
-                _ => errors += 1,
+                Ok(Err(err)) => {
+                    errors += 1;
+                    *error_types
+                        .entry(format!("Lambda invocation failed: {err}"))
+                        .or_insert(0) += 1;
+                }
+                _ => unreachable!("tasks should not be crashing"),
             }
+
             pb.inc(1);
+        } else {
+            break;
         }
     }
 
@@ -106,7 +130,10 @@ pub async fn run_stress_test(
     );
     println!();
     println!("Total time:         {:.2}s", elapsed.as_secs_f64());
-    println!("Throughput:         {:.0} calls/second", total_calls as f64 / elapsed.as_secs_f64());
+    println!(
+        "Throughput:         {:.0} calls/second",
+        total_calls as f64 / elapsed.as_secs_f64()
+    );
     println!();
 
     // Duration statistics
@@ -129,7 +156,21 @@ pub async fn run_stress_test(
         println!("  Total retries:      {}", total_retries);
         println!("  Max retries:        {}", max_retries);
         println!("  Avg retries/call:   {:.2}", avg_retries);
-        println!("  Transactions with retries: {} ({:.2}%)", transactions_with_retries, retry_rate);
+        println!(
+            "  Transactions with retries: {} ({:.2}%)",
+            transactions_with_retries, retry_rate
+        );
+        println!();
+    }
+
+    // Error breakdown
+    if !error_types.is_empty() {
+        println!("Error Breakdown:");
+        let mut error_vec: Vec<_> = error_types.iter().collect();
+        error_vec.sort_by(|a, b| b.1.cmp(a.1)); // Sort by count descending
+        for (error_type, count) in error_vec {
+            println!("  {}: {}", error_type, count);
+        }
         println!();
     }
 

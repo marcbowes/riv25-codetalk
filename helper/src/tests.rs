@@ -60,7 +60,7 @@ async fn test_chapter1() -> Result<()> {
 
 async fn test_chapter2() -> Result<()> {
     println!("Testing Chapter 2: Stress Test - 10K Invocations\n");
-    stress::run_stress_test(1000, 10, 1000).await?;
+    stress::run_stress_test(10_000, 1_000, 1_000).await?;
     println!("✅ Chapter 2 test complete");
     Ok(())
 }
@@ -73,7 +73,7 @@ async fn test_chapter3() -> Result<()> {
 
 async fn test_chapter4() -> Result<()> {
     println!("Testing Chapter 4: 1M Invocations\n");
-    stress::run_stress_test(10000, 100, 1000000).await?;
+    stress::run_stress_test(1_000_000, 10_000, 1_000_000).await?;
     println!("✅ Chapter 4 test complete");
     Ok(())
 }

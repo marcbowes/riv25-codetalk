@@ -311,7 +311,12 @@ export const handler: Handler<Request, Response> = async (event) => {
       await client.query("ROLLBACK");
       client.release();
     } catch (rollbackError) {
-      client.release(true);
+      // If rollback fails, connection is corrupted - destroy it
+      try {
+        client.release(true);
+      } catch (releaseError) {
+        // Ignore if release also fails
+      }
       throw rollbackError;
     }
 
@@ -470,10 +475,13 @@ export const handler: Handler<Request, Response> = async (event) => {
       // Rollback on any error
       try {
         await client.query("ROLLBACK");
-        client.release();
       } catch (rollbackError) {
         // If rollback fails, connection is corrupted - destroy it
-        client.release(true);
+        try {
+          client.release(true);
+        } catch (releaseError) {
+          // Ignore if release also fails
+        }
         throw rollbackError;
       }
 
@@ -490,6 +498,7 @@ export const handler: Handler<Request, Response> = async (event) => {
       }
 
       // If not an OCC error, return the error
+      client.release();
       return {
         error: error.message,
         errorCode: error.code,
@@ -504,10 +513,10 @@ export const handler: Handler<Request, Response> = async (event) => {
 Key changes:
 
 - **Type-safe error handling**: Catch errors as `unknown`, use `isPgError()` to narrow to PostgreSQL errors, re-throw non-PostgreSQL errors
-- **Robust rollback handling**: If `ROLLBACK` fails, destroy the connection with `client.release(true)` instead of returning it to the pool
+- **Robust rollback handling**: If `ROLLBACK` fails, destroy the connection with `client.release(true)` (double-catch to handle corrupted connections)
 - **Error code tracking**: Return both `error` message and `errorCode` for better debugging
 - **OCC detection**: Use `isOccError()` helper to check for PostgreSQL error code `40001` (serialization failure)
-- **Infinite retry loop**: Continue retrying OCC conflicts until success
+- **Infinite retry loop**: Continue retrying OCC conflicts until success (reuses same connection)
 - **No backoff**: Keep it simple - retry immediately
 - **Retry tracking**: Count and return the number of retries for observability
 

@@ -36,6 +36,11 @@ export class Dat401Stack extends cdk.Stack {
         memorySize: 512,
         environment: {
           CLUSTER_ENDPOINT: clusterEndpoint,
+          NODE_OPTIONS: "--enable-source-maps",
+        },
+        bundling: {
+          sourceMap: true,
+          minify: false,
         },
       },
     );

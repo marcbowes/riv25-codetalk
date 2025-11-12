@@ -35,6 +35,7 @@ pub mod tpcb {
         pub duration: Option<u64>,
         pub retries: Option<u32>,
         pub error: Option<String>,
+        pub error_code: Option<String>,
     }
 }
 
