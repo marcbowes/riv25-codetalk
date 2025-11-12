@@ -1,6 +1,29 @@
 import { Pool } from "pg";
 import { DsqlSigner } from "@aws-sdk/dsql-signer";
 
+export interface PgError extends Error {
+  code: string;
+  detail?: string;
+  hint?: string;
+  position?: string;
+  internalPosition?: string;
+  internalQuery?: string;
+  where?: string;
+  schema?: string;
+  table?: string;
+  column?: string;
+  dataType?: string;
+  constraint?: string;
+}
+
+export function isPgError(error: unknown): error is PgError {
+  return error instanceof Error && "code" in error;
+}
+
+export function isOccError(error: PgError): boolean {
+  return error.code === "40001";
+}
+
 let pool: Pool | null = null;
 
 export async function getPool(): Promise<Pool> {

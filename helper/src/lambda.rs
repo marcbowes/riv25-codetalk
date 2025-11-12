@@ -54,10 +54,9 @@ pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Res
     tracing::trace!(?response_bytes);
 
     if let Some(err) = response.function_error() {
-        tracing::error!(?err, "function error");
+        tracing::trace!(?err, "function error");
         let msg = String::from_utf8_lossy(response_bytes);
-        eprintln!("{msg}");
-        anyhow::bail!("function error: {err}");
+        anyhow::bail!("function error: {msg}");
     }
 
     Ok(serde_json::from_slice(response_bytes)?)

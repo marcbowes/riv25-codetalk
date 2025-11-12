@@ -242,7 +242,103 @@ You should see the updated balances reflecting the transfers.
 
 In this chapter, we'll run a stress test to observe how Aurora DSQL handles high concurrency with optimistic concurrency control (OCC), then implement retry logic to handle transaction conflicts.
 
-### Step 1: Run the Initial Stress Test
+### Step 1: Add Telemetry to Track Performance
+
+First, let's add telemetry fields to track execution time. Edit `lambda/src/index.ts` and update the Response interface:
+
+```typescript
+interface Response {
+  balance?: number;
+  error?: string;
+  errorCode?: string;
+  duration: number;
+  retries?: number;
+}
+```
+
+Update the handler to track execution time. First, import the error helper:
+
+```typescript
+import { getPool, isPgError } from "./db";
+
+export const handler: Handler<Request, Response> = async (event) => {
+  const startTime = Date.now();
+  const pool = await getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Deduct from payer
+    const deductResult = await client.query(
+      "UPDATE accounts SET balance = balance - $1 WHERE id = $2 RETURNING balance",
+      [event.amount, event.payer_id],
+    );
+
+    if (deductResult.rows.length === 0) {
+      throw new Error("Payer account not found");
+    }
+
+    const payerBalance = deductResult.rows[0].balance;
+
+    if (payerBalance < 0) {
+      throw new Error("Insufficient balance");
+    }
+
+    // Add to payee
+    const addResult = await client.query(
+      "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+      [event.amount, event.payee_id],
+    );
+
+    if (addResult.rowCount === 0) {
+      throw new Error("Payee account not found");
+    }
+
+    await client.query("COMMIT");
+    client.release();
+
+    const duration = Date.now() - startTime;
+    return {
+      balance: payerBalance,
+      duration,
+      retries: 0,
+    };
+  } catch (error: unknown) {
+    const duration = Date.now() - startTime;
+
+    try {
+      await client.query("ROLLBACK");
+      client.release();
+    } catch (rollbackError) {
+      client.release(true);
+      throw rollbackError;
+    }
+
+    if (!isPgError(error)) {
+      throw error;
+    }
+
+    return {
+      error: error.message,
+      errorCode: error.code,
+      duration,
+      retries: 0,
+    };
+  }
+};
+```
+
+### Step 2: Deploy
+
+```sh
+cd cdk
+npx cdk deploy
+```
+
+**During deployment (~1 minute):** Explain that we're adding telemetry to measure transaction performance under load.
+
+### Step 3: Run the Initial Stress Test
 
 The helper script includes a stress test that makes 10,000 API calls (1,000 parallel requests × 10 batches), randomly transferring $1 between accounts:
 
@@ -292,23 +388,17 @@ Error Breakdown:
 **What's happening:**
 Aurora DSQL uses optimistic concurrency control (OCC). When multiple transactions try to update the same rows simultaneously, DSQL detects conflicts and rejects some transactions with PostgreSQL error code **`40001`** (serialization failure). This is expected behavior - your application **must** implement retry logic to handle these conflicts.
 
-### Step 2: Implement Retry Logic
+### Step 4: Implement Retry Logic
 
-Edit `lambda/src/index.ts` to add automatic retry logic for OCC conflicts:
+Edit `lambda/src/index.ts` to add automatic retry logic for OCC conflicts. First, import the error helpers from `db.ts`:
 
 ```typescript
-interface Response {
-  balance?: number;
-  error?: string;
-  duration: number;
-  retries?: number; // Add retry tracking
-}
+import { getPool, isPgError, isOccError } from "./db";
+```
 
-function isOccError(error: any): boolean {
-  // Check for PostgreSQL serialization failure (DSQL OCC error)
-  return error?.code === "40001";
-}
+Now extract the transfer logic into a separate function:
 
+```typescript
 async function performTransfer(
   client: any,
   payerId: number,
@@ -357,67 +447,78 @@ export const handler: Handler<Request, Response> = async (event) => {
 
   let retryCount = 0;
 
-  try {
-    // Retry loop for OCC conflicts - retry indefinitely
-    while (true) {
+  // Retry loop for OCC conflicts - retry indefinitely
+  while (true) {
+    try {
+      const balance = await performTransfer(
+        client,
+        event.payer_id,
+        event.payee_id,
+        event.amount,
+      );
+
+      client.release();
+      const duration = Date.now() - startTime;
+      return {
+        balance,
+        duration,
+        retries: retryCount,
+      };
+    } catch (error: unknown) {
+      const duration = Date.now() - startTime;
+
+      // Rollback on any error
       try {
-        const balance = await performTransfer(
-          client,
-          event.payer_id,
-          event.payee_id,
-          event.amount,
-        );
-
-        const duration = Date.now() - startTime;
-        return {
-          balance,
-          duration,
-          retries: retryCount,
-        };
-      } catch (error) {
-        // Rollback on any error
-        try {
-          await client.query("ROLLBACK");
-        } catch (rollbackError) {
-          // Ignore rollback errors
-        }
-
-        // Check if it's an OCC error - if so, retry
-        if (isOccError(error)) {
-          retryCount++;
-          continue;
-        }
-
-        // If not an OCC error, return the error
-        const duration = Date.now() - startTime;
-        return {
-          error: error instanceof Error ? error.message : "Unknown error",
-          duration,
-          retries: retryCount,
-        };
+        await client.query("ROLLBACK");
+        client.release();
+      } catch (rollbackError) {
+        // If rollback fails, connection is corrupted - destroy it
+        client.release(true);
+        throw rollbackError;
       }
+
+      // Re-throw if not a PostgreSQL error
+      if (!isPgError(error)) {
+        client.release();
+        throw error;
+      }
+
+      // Check if it's an OCC error - if so, retry
+      if (isOccError(error)) {
+        retryCount++;
+        continue;
+      }
+
+      // If not an OCC error, return the error
+      return {
+        error: error.message,
+        errorCode: error.code,
+        duration,
+        retries: retryCount,
+      };
     }
-  } finally {
-    client.release();
   }
 };
 ```
 
 Key changes:
 
-- **Error detection**: Check for PostgreSQL error code `40001` (serialization failure)
+- **Type-safe error handling**: Catch errors as `unknown`, use `isPgError()` to narrow to PostgreSQL errors, re-throw non-PostgreSQL errors
+- **Robust rollback handling**: If `ROLLBACK` fails, destroy the connection with `client.release(true)` instead of returning it to the pool
+- **Error code tracking**: Return both `error` message and `errorCode` for better debugging
+- **OCC detection**: Use `isOccError()` helper to check for PostgreSQL error code `40001` (serialization failure)
 - **Infinite retry loop**: Continue retrying OCC conflicts until success
 - **No backoff**: Keep it simple - retry immediately
 - **Retry tracking**: Count and return the number of retries for observability
 
-### Step 3: Deploy
+### Step 5: Deploy
 
 ```sh
 cd cdk
 npx cdk deploy
 ```
 
-### Step 4: Run the Test Again
+### Step 6: Run the Test Again
 
 ```sh
 node helper.js --test-chapter 2
