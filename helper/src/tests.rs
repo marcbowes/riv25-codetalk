@@ -30,7 +30,10 @@ async fn test_chapter0() -> Result<()> {
 
     if response.greeting.contains("connected to DSQL successfully") {
         println!("✅ Chapter 0 test PASSED");
+    } else {
+        anyhow::bail!("Test failed");
     }
+
     Ok(())
 }
 
@@ -48,6 +51,8 @@ async fn test_chapter1() -> Result<()> {
     if let Some(balance) = response.balance {
         println!("✅ Chapter 1 test PASSED");
         println!("   Payer balance after transfer: {}", balance);
+    } else {
+        anyhow::bail!("Test failed");
     }
 
     Ok(())

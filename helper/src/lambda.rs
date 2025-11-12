@@ -31,7 +31,7 @@ pub mod tpcb {
 
     #[derive(Deserialize)]
     pub struct Response {
-        pub balance: Option<i32>,
+        pub balance: Option<String>,
         pub duration: Option<u64>,
         pub retries: Option<u32>,
         pub error: Option<String>,
@@ -53,12 +53,12 @@ pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Res
     let response_bytes = response.payload().unwrap().as_ref();
     tracing::trace!(?response_bytes);
 
-    match serde_json::from_slice(response_bytes) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            let msg = String::from_utf8_lossy(response_bytes);
-            eprintln!("{msg}");
-            Err(err)?
-        }
+    if let Some(err) = response.function_error() {
+        tracing::error!(?err, "function error");
+        let msg = String::from_utf8_lossy(response_bytes);
+        eprintln!("{msg}");
+        anyhow::bail!("function error: {err}");
     }
+
+    Ok(serde_json::from_slice(response_bytes)?)
 }
