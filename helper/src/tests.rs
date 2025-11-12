@@ -1,8 +1,18 @@
 use crate::{
+    db,
     lambda::{self, greeting, tpcb},
     stress,
 };
 use anyhow::Result;
+
+#[derive(sqlx::FromRow)]
+struct Transaction {
+    id: uuid::Uuid,
+    payer_id: i32,
+    payee_id: i32,
+    amount: i32,
+    created_at: chrono::NaiveDateTime,
+}
 
 pub async fn run_test(chapter: u32) -> Result<()> {
     match chapter {
@@ -66,9 +76,54 @@ async fn test_chapter2() -> Result<()> {
 }
 
 async fn test_chapter3() -> Result<()> {
-    println!("Testing Chapter 3: Transaction history\n");
-    // Implementation similar to chapter 1
-    test_chapter1().await
+    println!("Testing Chapter 3: Transaction history with UUID primary keys\n");
+
+    let req = tpcb::Request {
+        payer_id: 1,
+        payee_id: 2,
+        amount: 10,
+    };
+
+    println!("Invoking Lambda function 'reinvent-dat401' with payload '{:?}'", req);
+    let response: tpcb::Response = lambda::invoke_lambda(req).await?;
+
+    if let Some(balance) = response.balance {
+        println!("Response: balance = {}", balance);
+        if let Some(duration) = response.duration {
+            println!("  Duration: {}ms", duration);
+        }
+        if let Some(retries) = response.retries {
+            println!("  Retries: {}", retries);
+        }
+    } else {
+        anyhow::bail!("Test failed - no balance in response");
+    }
+
+    // Query the database to verify transaction was recorded
+    println!("\nChecking transactions table...");
+    let pool = db::get_pool().await?;
+
+    let transactions: Vec<Transaction> = sqlx::query_as(
+        "SELECT id, payer_id, payee_id, amount, created_at
+         FROM transactions
+         WHERE payer_id = $1
+         ORDER BY created_at DESC
+         LIMIT 5"
+    )
+    .bind(1i32)
+    .fetch_all(&pool)
+    .await?;
+
+    println!("Found {} recent transactions:", transactions.len());
+    for (i, tx) in transactions.iter().enumerate() {
+        println!(
+            "  {}. ID: {}, Payer: {}, Payee: {}, Amount: {}, Time: {}",
+            i + 1, tx.id, tx.payer_id, tx.payee_id, tx.amount, tx.created_at
+        );
+    }
+
+    println!("\n✅ Chapter 3 test PASSED");
+    Ok(())
 }
 
 async fn test_chapter4() -> Result<()> {

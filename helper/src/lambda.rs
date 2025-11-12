@@ -22,7 +22,7 @@ pub mod greeting {
 pub mod tpcb {
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize)]
+    #[derive(Serialize, Debug)]
     pub struct Request {
         pub payer_id: u32,
         pub payee_id: u32,

@@ -613,15 +613,6 @@ Grant permissions on the new table to the `myapp` role:
 GRANT ALL ON public.transactions TO myapp;
 ```
 
-Create indexes to enable efficient lookups by payer, payee, and date:
-
-```sql
-CREATE INDEX ASYNC idx_transactions_payer ON transactions(payer_id, created_at);
-CREATE INDEX ASYNC idx_transactions_payee ON transactions(payee_id, created_at);
-```
-
-**About `CREATE INDEX ASYNC`:** DSQL supports asynchronous index creation, which allows you to create indexes without blocking writes to the table. The indexes are built in the background and become available once complete. See the [DSQL CREATE INDEX ASYNC documentation](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/working-with-create-index-async.html) for more details.
-
 ### Step 2: Update Lambda to Record Transaction History
 
 Edit `lambda/src/index.ts` and add an INSERT statement to record each transaction:
@@ -745,9 +736,28 @@ These indexes support queries ordered by date because `created_at` is the second
 
 In this chapter, we'll learn how to analyze query performance in DSQL using `EXPLAIN ANALYZE`, understand how indexes are used, and optimize query execution.
 
-### Step 1: Analyze a Query with EXPLAIN ANALYZE
+### Step 1: Create Composite Indexes
 
-Let's analyze how DSQL executes queries using the composite indexes we created in Chapter 3. In your psql session, run:
+First, let's create composite indexes to enable efficient lookups by payer and payee with date range queries. In your psql session, run:
+
+```sql
+CREATE INDEX ASYNC idx_transactions_payer ON transactions(payer_id, created_at);
+CREATE INDEX ASYNC idx_transactions_payee ON transactions(payee_id, created_at);
+```
+
+**About `CREATE INDEX ASYNC`:** DSQL supports asynchronous index creation, which allows you to create indexes without blocking writes to the table. The indexes are built in the background and become available once complete. You can check the status with:
+
+```sql
+SELECT * FROM sys.index_creation_status;
+```
+
+Wait for both indexes to show `state = 'AVAILABLE'` before proceeding.
+
+**Why composite indexes?** By including both `payer_id` (or `payee_id`) and `created_at` in the index, we enable efficient queries that filter by account ID and sort by date - a common pattern for transaction history.
+
+### Step 2: Analyze a Query with EXPLAIN ANALYZE
+
+Now let's analyze how DSQL executes queries using these composite indexes. In your psql session, run:
 
 ```sql
 EXPLAIN ANALYZE SELECT id, payer_id, payee_id, amount, created_at
@@ -787,7 +797,7 @@ You should see output similar to:
 **Why isn't the composite index being used?**
 With only 6 rows, DSQL's query optimizer determines that scanning the entire table is faster than using the composite index. This is a good decision by the optimizer - the overhead of index lookups would be more expensive than just scanning 6 rows.
 
-### Step 2: Setup 1M Accounts for Stress Testing
+### Step 3: Setup 1M Accounts for Stress Testing
 
 To see the index being used, we need more data. Let's create 1 million accounts:
 
@@ -812,7 +822,7 @@ Account insertion complete!
 
 **During setup (~2-3 minutes):** This demonstrates how to efficiently bulk-load data into DSQL using parallel workers and batched inserts.
 
-### Step 3: Run the Extreme Stress Test
+### Step 4: Run the Extreme Stress Test
 
 Now let's run a 1M invocation stress test using 50 parallel workers:
 
@@ -874,7 +884,7 @@ OCC Retry Statistics:
 - ✅ **Max 2 retries** - with better data distribution across 1M accounts, OCC conflicts are rare
 - ✅ **Average latency 409ms** - includes time for retries and high concurrency queuing
 
-### Step 4: Verify Index Usage with EXPLAIN ANALYZE
+### Step 5: Verify Index Usage with EXPLAIN ANALYZE
 
 Now with ~1M transactions in the table, let's run the same query again:
 
@@ -928,4 +938,4 @@ With ~1M rows in the table, the query optimizer determines that using the compos
 
 Even with 166,000x more data, the query is only ~2.4x slower thanks to the composite index! This demonstrates the power of proper indexing in distributed databases.
 
-**Reference:** See `ch03/` directory for the complete implementation (Chapter 4 reuses Chapter 3's Lambda code).
+**Reference:** See `ch03/` directory for the complete implementation (Chapter 4 reuses Chapter 3's Lambda code and adds indexes for query analysis).
