@@ -1,36 +1,48 @@
 use anyhow::Result;
 use aws_config::BehaviorVersion;
-use aws_sdk_lambda::{Client, primitives::Blob};
-use serde::{Deserialize, Serialize};
+use aws_sdk_lambda::{primitives::Blob, Client};
+use serde::{de::DeserializeOwned, Serialize};
 
 const FUNCTION_NAME: &str = "reinvent-dat401";
 
-#[derive(Serialize)]
-pub struct TransferRequest {
-    pub payer_id: u32,
-    pub payee_id: u32,
-    pub amount: u32,
+pub mod greeting {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize)]
+    pub struct Request {
+        pub name: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Response {
+        pub greeting: String,
+    }
 }
 
-#[derive(Serialize)]
-pub struct GreetingRequest {
-    pub name: String,
+pub mod tpcb {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize)]
+    pub struct Request {
+        pub payer_id: u32,
+        pub payee_id: u32,
+        pub amount: u32,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Response {
+        pub balance: Option<i32>,
+        pub duration: Option<u64>,
+        pub retries: Option<u32>,
+        pub error: Option<String>,
+    }
 }
 
-#[derive(Deserialize)]
-pub struct Response {
-    pub greeting: Option<String>,
-    pub balance: Option<i32>,
-    pub duration: Option<u64>,
-    pub retries: Option<u32>,
-    pub error: Option<String>,
-}
-
-pub async fn invoke_lambda<T: Serialize>(payload: &T) -> Result<Response> {
+pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Result<R> {
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
     let client = Client::new(&config);
 
-    let payload_str = serde_json::to_string(payload)?;
+    let payload_str = serde_json::to_string(&payload)?;
     let response = client
         .invoke()
         .function_name(FUNCTION_NAME)
@@ -39,7 +51,14 @@ pub async fn invoke_lambda<T: Serialize>(payload: &T) -> Result<Response> {
         .await?;
 
     let response_bytes = response.payload().unwrap().as_ref();
-    let result: Response = serde_json::from_slice(response_bytes)?;
+    tracing::trace!(?response_bytes);
 
-    Ok(result)
+    match serde_json::from_slice(response_bytes) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            let msg = String::from_utf8_lossy(response_bytes);
+            eprintln!("{msg}");
+            Err(err)?
+        }
+    }
 }

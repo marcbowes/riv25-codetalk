@@ -1,6 +1,7 @@
 mod cli;
 mod db;
 mod lambda;
+mod setup;
 mod stress;
 mod tests;
 
@@ -9,6 +10,8 @@ use clap::Parser;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+
     let args = cli::Args::parse();
 
     match args.command {
@@ -16,10 +19,10 @@ async fn main() -> Result<()> {
             tests::run_test(chapter).await?;
         }
         cli::Command::Setup { accounts } => {
-            tests::setup_schema(accounts).await?;
+            setup::setup_schema(accounts).await?;
         }
         cli::Command::SetupCh04 => {
-            tests::setup_chapter4().await?;
+            setup::setup_chapter4().await?;
         }
     }
 

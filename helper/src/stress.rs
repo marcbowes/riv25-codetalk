@@ -1,4 +1,7 @@
-use crate::lambda::{invoke_lambda, TransferRequest};
+use crate::lambda::{
+    invoke_lambda,
+    tpcb::{self},
+};
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Instant;
@@ -36,14 +39,11 @@ pub async fn run_stress_test(
                 payee_id = rand::random::<u32>() % num_accounts + 1;
             }
 
-            tasks.spawn(async move {
-                invoke_lambda(&TransferRequest {
-                    payer_id,
-                    payee_id,
-                    amount: 1,
-                })
-                .await
-            });
+            tasks.spawn(invoke_lambda::<_, tpcb::Response>(tpcb::Request {
+                payer_id,
+                payee_id,
+                amount: 1,
+            }));
         }
 
         while let Some(result) = tasks.join_next().await {
@@ -65,7 +65,11 @@ pub async fn run_stress_test(
 
     let elapsed = start.elapsed();
     println!("\nTotal calls: {}", total_calls);
-    println!("Successful: {} ({:.2}%)", success, (success as f64 / total_calls as f64) * 100.0);
+    println!(
+        "Successful: {} ({:.2}%)",
+        success,
+        (success as f64 / total_calls as f64) * 100.0
+    );
     println!("Errors: {}", errors);
     println!("Total time: {:.2}s", elapsed.as_secs_f64());
 

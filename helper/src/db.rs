@@ -4,29 +4,24 @@ use aws_sdk_dsql::auth_token::{AuthToken, AuthTokenGenerator, Config};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Pool, Postgres};
 
-const TOKEN_EXPIRATION_SECONDS: u64 = 15 * 60;
-
-async fn generate_token(
-    cluster_endpoint: &str,
-    region: &str,
-    is_admin: bool,
-) -> Result<AuthToken> {
+async fn generate_token(cluster_endpoint: &str, region: &str, is_admin: bool) -> Result<AuthToken> {
     let sdk_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
     let config = Config::builder()
         .hostname(cluster_endpoint)
         .region(aws_config::Region::new(region.to_string()))
-        .expires_in(TOKEN_EXPIRATION_SECONDS)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build config: {}", e))?;
 
     let signer = AuthTokenGenerator::new(config);
 
     let token = if is_admin {
-        signer.db_connect_admin_auth_token(&sdk_config)
+        signer
+            .db_connect_admin_auth_token(&sdk_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to generate admin token: {}", e))?
     } else {
-        signer.db_connect_auth_token(&sdk_config)
+        signer
+            .db_connect_auth_token(&sdk_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to generate token: {}", e))?
     };
@@ -49,7 +44,7 @@ pub async fn get_pool() -> Result<Pool<Postgres>> {
         .ssl_mode(sqlx::postgres::PgSslMode::Require);
 
     let pool = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(1_000)
         .connect_with(options)
         .await?;
 

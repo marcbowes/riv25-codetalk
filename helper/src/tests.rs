@@ -1,4 +1,7 @@
-use crate::{db, lambda, stress};
+use crate::{
+    lambda::{self, greeting, tpcb},
+    stress,
+};
 use anyhow::Result;
 
 pub async fn run_test(chapter: u32) -> Result<()> {
@@ -18,32 +21,29 @@ pub async fn run_test(chapter: u32) -> Result<()> {
 async fn test_chapter0() -> Result<()> {
     println!("Testing Chapter 0: Basic Lambda invocation with DSQL connection\n");
 
-    let req = lambda::GreetingRequest {
+    let req = greeting::Request {
         name: "reinvent".to_string(),
     };
 
-    let response = lambda::invoke_lambda(&req).await?;
+    let response: greeting::Response = lambda::invoke_lambda(&req).await?;
     println!("Response: {:?}", response.greeting);
 
-    if let Some(greeting) = response.greeting {
-        if greeting.contains("connected to DSQL successfully") {
-            println!("✅ Chapter 0 test PASSED");
-        }
+    if response.greeting.contains("connected to DSQL successfully") {
+        println!("✅ Chapter 0 test PASSED");
     }
-
     Ok(())
 }
 
 async fn test_chapter1() -> Result<()> {
     println!("Testing Chapter 1: Money transfer\n");
 
-    let req = lambda::TransferRequest {
+    let req = tpcb::Request {
         payer_id: 1,
         payee_id: 2,
         amount: 10,
     };
 
-    let response = lambda::invoke_lambda(&req).await?;
+    let response: tpcb::Response = lambda::invoke_lambda(req).await?;
 
     if let Some(balance) = response.balance {
         println!("✅ Chapter 1 test PASSED");
@@ -70,18 +70,5 @@ async fn test_chapter4() -> Result<()> {
     println!("Testing Chapter 4: 1M Invocations\n");
     stress::run_stress_test(10000, 100, 1000000).await?;
     println!("✅ Chapter 4 test complete");
-    Ok(())
-}
-
-pub async fn setup_schema(_accounts: u32) -> Result<()> {
-    println!("Setting up database schema...");
-    let _pool = db::get_pool().await?;
-    // Setup implementation
-    Ok(())
-}
-
-pub async fn setup_chapter4() -> Result<()> {
-    println!("Setting up Chapter 4: Creating 1M accounts");
-    // Setup implementation
     Ok(())
 }
