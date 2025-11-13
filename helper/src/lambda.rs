@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_once_cell::OnceCell;
 use aws_config::BehaviorVersion;
 use aws_sdk_lambda::{primitives::Blob, Client};
 use serde::{de::DeserializeOwned, Serialize};
@@ -39,9 +40,16 @@ pub mod tpcb {
     }
 }
 
+const CLIENT: OnceCell<Client> = OnceCell::new();
+
 pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Result<R> {
-    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-    let client = Client::new(&config);
+    let client = CLIENT
+        .get_or_init(async {
+            let config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+            Client::new(&config)
+        })
+        .await
+        .clone();
 
     let payload_str = serde_json::to_string(&payload)?;
     let response = client

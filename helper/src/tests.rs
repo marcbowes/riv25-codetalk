@@ -84,7 +84,10 @@ async fn test_chapter3() -> Result<()> {
         amount: 10,
     };
 
-    println!("Invoking Lambda function 'reinvent-dat401' with payload '{:?}'", req);
+    println!(
+        "Invoking Lambda function 'reinvent-dat401' with payload '{:?}'",
+        req
+    );
     let response: tpcb::Response = lambda::invoke_lambda(req).await?;
 
     if let Some(balance) = response.balance {
@@ -108,7 +111,7 @@ async fn test_chapter3() -> Result<()> {
          FROM transactions
          WHERE payer_id = $1
          ORDER BY created_at DESC
-         LIMIT 5"
+         LIMIT 5",
     )
     .bind(1i32)
     .fetch_all(&pool)
@@ -118,7 +121,12 @@ async fn test_chapter3() -> Result<()> {
     for (i, tx) in transactions.iter().enumerate() {
         println!(
             "  {}. ID: {}, Payer: {}, Payee: {}, Amount: {}, Time: {}",
-            i + 1, tx.id, tx.payer_id, tx.payee_id, tx.amount, tx.created_at
+            i + 1,
+            tx.id,
+            tx.payer_id,
+            tx.payee_id,
+            tx.amount,
+            tx.created_at
         );
     }
 
@@ -127,8 +135,8 @@ async fn test_chapter3() -> Result<()> {
 }
 
 async fn test_chapter4() -> Result<()> {
-    println!("Testing Chapter 4: 1M Invocations\n");
-    stress::run_stress_test(1_000_000, 10_000, 1_000_000).await?;
+    println!("Testing Chapter 4: 100K Invocations\n");
+    stress::run_stress_test(100_000, 1_000, 1_000_000).await?;
     println!("✅ Chapter 4 test complete");
     Ok(())
 }

@@ -40,12 +40,23 @@ pub async fn setup_schema(num_accounts: u32) -> Result<()> {
     sqlx::query("DELETE FROM transactions").execute(&pool).await?;
     println!("Cleared existing data");
 
-    // Insert accounts using generate_series
+    // Insert accounts using generate_series in batches
     println!("Inserting {} accounts...", num_accounts);
-    sqlx::query("INSERT INTO accounts (id, balance) SELECT id, 100 FROM generate_series(1, $1) AS id")
-        .bind(num_accounts as i32)
-        .execute(&pool)
-        .await?;
+    const BATCH_SIZE: i32 = 1_000; // DSQL transaction row limit
+    let mut inserted = 0i32;
+
+    while inserted < num_accounts as i32 {
+        let start_id = inserted + 1;
+        let end_id = (inserted + BATCH_SIZE).min(num_accounts as i32);
+
+        sqlx::query("INSERT INTO accounts (id, balance) SELECT id, 100 FROM generate_series($1, $2) AS id")
+            .bind(start_id)
+            .bind(end_id)
+            .execute(&pool)
+            .await?;
+
+        inserted = end_id;
+    }
 
     println!("Database setup complete!");
     Ok(())
@@ -81,7 +92,7 @@ pub async fn setup_chapter4() -> Result<()> {
             .progress_chars("=>-"),
     );
 
-    const BATCH_SIZE: i64 = 10_000;
+    const BATCH_SIZE: i64 = 1_000; // DSQL transaction row limit
     let mut inserted = 0i64;
 
     while inserted < needed_accounts {

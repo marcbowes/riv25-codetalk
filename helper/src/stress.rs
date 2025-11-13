@@ -3,7 +3,7 @@ use crate::lambda::{
     tpcb::{self},
 };
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::time::Instant;
 use tokio::task::JoinSet;
@@ -17,7 +17,10 @@ pub async fn run_stress_test(
     println!("Max parallel requests: {}", parallel_calls);
     println!();
 
-    let pb = ProgressBar::new(total_calls as u64);
+    let m = MultiProgress::new();
+
+    let concurrent = m.add(ProgressBar::new(parallel_calls as u64));
+    let pb = m.add(ProgressBar::new(total_calls as u64));
     pb.set_style(
         ProgressStyle::default_bar()
             .template("[{bar:40}] {pos}/{len} ({per_sec}) {msg}")?
@@ -55,11 +58,14 @@ pub async fn run_stress_test(
                     amount: 1,
                 }));
                 launched += 1;
+                concurrent.inc(1);
             }
         }
 
         // As tasks complete, launch new ones to maintain parallelism
         if let Some(result) = tasks.join_next().await {
+            concurrent.dec(1);
+
             // Process completed task
             match result {
                 Ok(Ok(response)) => {
@@ -109,7 +115,8 @@ pub async fn run_stress_test(
         }
     }
 
-    pb.finish();
+    concurrent.finish_and_clear();
+    pb.finish_and_clear();
 
     let elapsed = start.elapsed();
 
