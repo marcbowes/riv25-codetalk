@@ -11,7 +11,7 @@ pub async fn setup_schema(num_accounts: u32) -> Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY,
-            balance NUMERIC NOT NULL
+            balance INTEGER NOT NULL
         )
         "#,
     )
@@ -37,7 +37,9 @@ pub async fn setup_schema(num_accounts: u32) -> Result<()> {
 
     // Clear existing data
     sqlx::query("DELETE FROM accounts").execute(&pool).await?;
-    sqlx::query("DELETE FROM transactions").execute(&pool).await?;
+    sqlx::query("DELETE FROM transactions")
+        .execute(&pool)
+        .await?;
     println!("Cleared existing data");
 
     // Insert accounts using generate_series in batches
@@ -49,11 +51,13 @@ pub async fn setup_schema(num_accounts: u32) -> Result<()> {
         let start_id = inserted + 1;
         let end_id = (inserted + BATCH_SIZE).min(num_accounts as i32);
 
-        sqlx::query("INSERT INTO accounts (id, balance) SELECT id, 100 FROM generate_series($1, $2) AS id")
-            .bind(start_id)
-            .bind(end_id)
-            .execute(&pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO accounts (id, balance) SELECT id, 100 FROM generate_series($1, $2) AS id",
+        )
+        .bind(start_id)
+        .bind(end_id)
+        .execute(&pool)
+        .await?;
 
         inserted = end_id;
     }
@@ -83,7 +87,10 @@ pub async fn setup_chapter4() -> Result<()> {
     }
 
     let needed_accounts = TARGET_ACCOUNTS - current_count;
-    println!("Inserting {} more accounts to reach {}...\n", needed_accounts, TARGET_ACCOUNTS);
+    println!(
+        "Inserting {} more accounts to reach {}...\n",
+        needed_accounts, TARGET_ACCOUNTS
+    );
 
     let pb = ProgressBar::new(needed_accounts as u64);
     pb.set_style(
@@ -100,11 +107,13 @@ pub async fn setup_chapter4() -> Result<()> {
         let end_id = (current_count + inserted + BATCH_SIZE).min(TARGET_ACCOUNTS);
         let batch_count = end_id - start_id + 1;
 
-        sqlx::query("INSERT INTO accounts (id, balance) SELECT id, 100 FROM generate_series($1, $2) AS id")
-            .bind(start_id as i32)
-            .bind(end_id as i32)
-            .execute(&pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO accounts (id, balance) SELECT id, 100 FROM generate_series($1, $2) AS id",
+        )
+        .bind(start_id as i32)
+        .bind(end_id as i32)
+        .execute(&pool)
+        .await?;
 
         inserted += batch_count;
         pb.set_position(inserted as u64);
