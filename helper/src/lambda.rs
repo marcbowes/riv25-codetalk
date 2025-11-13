@@ -40,12 +40,46 @@ pub mod tpcb {
     }
 }
 
+// Wrapper that implements ProvideCredentials using our cache
+#[derive(Clone, Debug)]
+struct CachedCredentialsProvider {
+    cache: &'static crate::credentials::CredentialCache,
+}
+
+impl aws_credential_types::provider::ProvideCredentials for CachedCredentialsProvider {
+    fn provide_credentials<'a>(
+        &'a self,
+    ) -> aws_credential_types::provider::future::ProvideCredentials<'a>
+    where
+        Self: 'a,
+    {
+        aws_credential_types::provider::future::ProvideCredentials::new(async move {
+            self.cache
+                .get_credentials()
+                .await
+                .map_err(|e| aws_credential_types::provider::error::CredentialsError::not_loaded(e))
+        })
+    }
+}
+
 const CLIENT: OnceCell<Client> = OnceCell::new();
 
 pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Result<R> {
     let client = CLIENT
         .get_or_init(async {
-            let config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+            let cache = crate::credentials::get_credential_cache().await;
+
+            // Create a credentials provider that uses our cache
+            let credentials_provider = aws_credential_types::provider::SharedCredentialsProvider::new(
+                CachedCredentialsProvider {
+                    cache,
+                }
+            );
+
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .credentials_provider(credentials_provider)
+                .load()
+                .await;
             Client::new(&config)
         })
         .await

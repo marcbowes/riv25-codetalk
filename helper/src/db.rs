@@ -1,11 +1,22 @@
 use anyhow::Result;
-use aws_config::BehaviorVersion;
 use aws_sdk_dsql::auth_token::{AuthToken, AuthTokenGenerator, Config};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Pool, Postgres};
 
 async fn generate_token(cluster_endpoint: &str, region: &str, is_admin: bool) -> Result<AuthToken> {
-    let sdk_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    let cache = crate::credentials::get_credential_cache().await;
+
+    // Get cached credentials
+    let credentials = cache.get_credentials().await?;
+
+    // Build SDK config with our cached credentials
+    let credentials_provider = aws_credential_types::provider::SharedCredentialsProvider::new(credentials);
+    let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .credentials_provider(credentials_provider)
+        .region(aws_config::Region::new(region.to_string()))
+        .load()
+        .await;
+
     let config = Config::builder()
         .hostname(cluster_endpoint)
         .region(aws_config::Region::new(region.to_string()))
@@ -14,6 +25,7 @@ async fn generate_token(cluster_endpoint: &str, region: &str, is_admin: bool) ->
 
     let signer = AuthTokenGenerator::new(config);
 
+    // Use the SDK config with cached credentials
     let token = if is_admin {
         signer
             .db_connect_admin_auth_token(&sdk_config)

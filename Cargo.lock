@@ -1201,6 +1201,7 @@ dependencies = [
  "anyhow",
  "async-once-cell",
  "aws-config",
+ "aws-credential-types",
  "aws-sdk-dsql",
  "aws-sdk-lambda",
  "chrono",

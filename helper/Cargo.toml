@@ -9,6 +9,7 @@ sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-native-tls", "u
 aws-config = { version = "1.5", features = ["behavior-version-latest"] }
 aws-sdk-dsql = "1"
 aws-sdk-lambda = "1"
+aws-credential-types = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"

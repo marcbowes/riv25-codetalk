@@ -1,4 +1,5 @@
 mod cli;
+mod credentials;
 mod db;
 mod lambda;
 mod setup;
