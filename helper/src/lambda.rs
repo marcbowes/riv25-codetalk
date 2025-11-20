@@ -1,7 +1,9 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use async_once_cell::OnceCell;
-use aws_config::BehaviorVersion;
-use aws_sdk_lambda::{primitives::Blob, Client};
+use aws_config::{retry::RetryConfig, timeout::TimeoutConfig, BehaviorVersion};
+use aws_sdk_lambda::{error::SdkError, primitives::Blob, Client};
 use serde::{de::DeserializeOwned, Serialize};
 
 const FUNCTION_NAME: &str = "reinvent-dat401";
@@ -32,7 +34,7 @@ pub mod tpcb {
 
     #[derive(Deserialize)]
     pub struct Response {
-        pub balance: Option<String>,
+        pub balance: Option<u32>,
         pub duration: Option<u64>,
         pub retries: Option<u32>,
         pub error: Option<String>,
@@ -70,14 +72,19 @@ pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Res
             let cache = crate::credentials::get_credential_cache().await;
 
             // Create a credentials provider that uses our cache
-            let credentials_provider = aws_credential_types::provider::SharedCredentialsProvider::new(
-                CachedCredentialsProvider {
-                    cache,
-                }
-            );
+            let credentials_provider =
+                aws_credential_types::provider::SharedCredentialsProvider::new(
+                    CachedCredentialsProvider { cache },
+                );
 
             let config = aws_config::defaults(BehaviorVersion::latest())
                 .credentials_provider(credentials_provider)
+                .timeout_config(
+                    TimeoutConfig::builder()
+                        .connect_timeout(Duration::from_secs(30))
+                        .build(),
+                )
+                .retry_config(RetryConfig::standard().with_max_attempts(1))
                 .load()
                 .await;
             Client::new(&config)
@@ -91,7 +98,18 @@ pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Res
         .function_name(FUNCTION_NAME)
         .payload(Blob::new(payload_str.as_bytes()))
         .send()
-        .await?;
+        .await;
+    let response = match response {
+        Ok(r) => r,
+        Err(err) => {
+            match err {
+                SdkError::DispatchFailure(ref d) => tracing::error!(?d, "dispatch failure"),
+                _ => {}
+            }
+
+            return Err(err)?;
+        }
+    };
 
     let response_bytes = response.payload().unwrap().as_ref();
     tracing::trace!(?response_bytes);

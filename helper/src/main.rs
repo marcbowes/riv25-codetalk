@@ -9,7 +9,7 @@ mod tests;
 use anyhow::Result;
 use clap::Parser;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 64)]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 

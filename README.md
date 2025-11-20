@@ -745,10 +745,16 @@ CREATE INDEX ASYNC idx_transactions_payer ON transactions(payer_id, created_at);
 CREATE INDEX ASYNC idx_transactions_payee ON transactions(payee_id, created_at);
 ```
 
-**About `CREATE INDEX ASYNC`:** DSQL supports asynchronous index creation, which allows you to create indexes without blocking writes to the table. The indexes are built in the background and become available once complete. You can check the status with:
+**About `CREATE INDEX ASYNC`:** DSQL supports asynchronous index creation, which allows you to create indexes without blocking writes to the table. The indexes are built in the background and become available once complete. You can wait for the background job by running:
+
+``` sql
+CALL sys.wait_for_job(id);
+```
+
+Or you can look at all running or recent jobs:
 
 ```sql
-SELECT * FROM sys.index_creation_status;
+SELECT * FROM sys.jobs;
 ```
 
 Wait for both indexes to show `state = 'AVAILABLE'` before proceeding.

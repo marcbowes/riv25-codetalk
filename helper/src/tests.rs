@@ -136,7 +136,7 @@ async fn test_chapter3() -> Result<()> {
 
 async fn test_chapter4() -> Result<()> {
     println!("Testing Chapter 4: 100K Invocations\n");
-    stress::run_stress_test(100_000, 1_000, 1_000_000).await?;
+    stress::run_stress_test(1_000_000, 10_000, 1_000_000).await?;
     println!("✅ Chapter 4 test complete");
     Ok(())
 }
