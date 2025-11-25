@@ -64,7 +64,7 @@ impl aws_credential_types::provider::ProvideCredentials for CachedCredentialsPro
     }
 }
 
-const CLIENT: OnceCell<Client> = OnceCell::new();
+static CLIENT: OnceCell<Client> = OnceCell::new();
 
 pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Result<R> {
     let client = CLIENT
