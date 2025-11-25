@@ -7,6 +7,7 @@ In this live coding session, we'll show you how to work with Amazon Aurora DSQL 
 ## Prerequisites
 
 - Node.js 20+ and npm
+- Rust toolchain (install via [rustup](https://rustup.rs/))
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - AWS credentials configured
 - PostgreSQL client (`psql`) for database operations
@@ -20,8 +21,12 @@ Before the session, set up your working directory:
 cp -r starter-kit my-dsql-app
 cd my-dsql-app
 
-# Install dependencies (includes helper.js dependencies and workspace packages)
+# Install dependencies
 npm install
+
+# Build the helper CLI tool (from the repository root)
+cd ..
+cargo build --release
 ```
 
 Deploy the stack with DSQL cluster and Lambda function:
@@ -73,9 +78,8 @@ SELECT * FROM sys.iam_pg_role_mappings;
 Test the Lambda function:
 
 ```sh
-# From the chapter root
-cd ..
-node helper.js --test-chapter 0
+# From the repository root
+cargo run --release -- --test-chapter 0
 # Expected: ✅ Chapter 0 test PASSED
 #           Response shows "connected to DSQL successfully!"
 ```
@@ -207,10 +211,10 @@ In your psql session, grant permissions on the new table `accounts` to `myapp` r
 GRANT ALL ON public.accounts TO myapp;
 ```
 
-Then, test a transfer from account 1 to account 2 using the helper:
+Then, test a transfer from account 1 to account 2 using the helper CLI:
 
 ```sh
-node helper.js --test-chapter 1
+cargo run --release -- --test-chapter 1
 # Expected: ✅ Chapter 1 test PASSED
 #           Payer balance after transfer: 90
 ```
@@ -345,10 +349,10 @@ npx cdk deploy
 
 ### Step 3: Run the Initial Stress Test
 
-The helper script includes a stress test that makes 10,000 API calls (1,000 parallel requests × 10 batches), randomly transferring $1 between accounts:
+The helper CLI includes a stress test that makes 10,000 API calls (1,000 parallel requests × 10 batches), randomly transferring $1 between accounts:
 
 ```sh
-node helper.js --test-chapter 2
+cargo run --release -- --test-chapter 2
 ```
 
 You should see real-time progress and a summary like this:
@@ -530,7 +534,7 @@ npx cdk deploy
 ### Step 6: Run the Test Again
 
 ```sh
-node helper.js --test-chapter 2
+cargo run --release -- --test-chapter 2
 ```
 
 Now you should see **100% success rate** with retry statistics:
@@ -678,7 +682,7 @@ npx cdk deploy
 ### Step 4: Test Transaction History
 
 ```sh
-node helper.js --test-chapter 3
+cargo run --release -- --test-chapter 3
 ```
 
 Expected output:
@@ -808,7 +812,7 @@ With only 6 rows, DSQL's query optimizer determines that scanning the entire tab
 To see the index being used, we need more data. Let's create 1 million accounts:
 
 ```sh
-node helper.js --setup-ch04
+cargo run --release -- --setup-ch04
 ```
 
 This command uses 128 parallel worker threads to insert 1M accounts efficiently. You should see progress like:
@@ -833,7 +837,7 @@ Account insertion complete!
 Now let's run a 1M invocation stress test using 50 parallel workers:
 
 ```sh
-node helper.js --test-chapter 4
+cargo run --release -- --test-chapter 4
 ```
 
 This will perform:
