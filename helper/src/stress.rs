@@ -185,10 +185,8 @@ pub async fn run_sustained_load(
     invocations_per_sec: u32,
     num_accounts: u32,
 ) -> Result<()> {
-    use async_rate_limiter::RateLimiter;
-
-    println!("Sustained Load Generator");
-    println!("========================");
+    println!("Sustained Load Generator (AIMD)");
+    println!("========================================");
     println!("Target rate: {}/sec", invocations_per_sec);
     println!("Max in-flight: {}", invocations_per_sec * 50);
     println!("Account pool: {}", num_accounts);
@@ -197,6 +195,7 @@ pub async fn run_sustained_load(
     println!();
 
     let client = Arc::new(client.clone());
+    let max_in_flight = (invocations_per_sec * 50) as usize;
 
     let running = Arc::new(AtomicBool::new(true));
     let total_calls = Arc::new(AtomicUsize::new(0));
@@ -205,7 +204,12 @@ pub async fn run_sustained_load(
     let total_duration = Arc::new(AtomicU64::new(0));
     let total_retries = Arc::new(AtomicU64::new(0));
     let in_flight = Arc::new(AtomicUsize::new(0));
+    let concurrency_target = Arc::new(AtomicUsize::new(10)); // Start small
 
+    // Channel for latency samples
+    let (latency_tx, mut latency_rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
+
+    // Ctrl-C handler
     let running_clone = running.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
@@ -217,126 +221,127 @@ pub async fn run_sustained_load(
 
     let m = MultiProgress::new();
     let pb = m.add(ProgressBar::new_spinner());
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} {msg}")
-            .unwrap(),
-    );
+    pb.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}").unwrap());
 
-    let limiter = RateLimiter::new(invocations_per_sec as usize);
-    let max_in_flight = invocations_per_sec as usize * 50;
+    // AIMD controller - adjusts concurrency based on success/errors
+    let aimd_running = running.clone();
+    let aimd_success = success_count.clone();
+    let aimd_errors = error_count.clone();
+    let aimd_target = concurrency_target.clone();
+    let aimd_pb = pb.clone();
+    let aimd_in_flight = in_flight.clone();
 
-    let stats_running = running.clone();
-    let stats_total = total_calls.clone();
-    let stats_success = success_count.clone();
-    let stats_errors = error_count.clone();
-    let stats_in_flight = in_flight.clone();
-    let stats_pb = pb.clone();
-    let stats_handle = tokio::spawn(async move {
-        let mut last_calls = 0usize;
-        while stats_running.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+    let aimd_handle = tokio::spawn(async move {
+        use hdrhistogram::Histogram;
+        let mut hist: Histogram<u64> = Histogram::new(3).unwrap();
+        let mut last_success = 0usize;
+        let mut last_errors = 0usize;
+        let mut last_good_concurrency = 10usize;
 
-            let current_calls = stats_total.load(Ordering::Relaxed);
-            let calls_per_sec = current_calls - last_calls;
-            let success = stats_success.load(Ordering::Relaxed);
-            let errors = stats_errors.load(Ordering::Relaxed);
-            let flying = stats_in_flight.load(Ordering::Relaxed);
-            let success_rate = if current_calls > 0 {
-                (success as f64 / current_calls as f64) * 100.0
-            } else {
-                0.0
-            };
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                    if !aimd_running.load(Ordering::SeqCst) { break; }
 
-            stats_pb.set_message(format!(
-                "Calls: {} | {}/s | Success: {:.4}% | Errors: {} | In-flight: {}",
-                current_calls, calls_per_sec, success_rate, errors, flying
-            ));
+                    let current_success = aimd_success.load(Ordering::Relaxed);
+                    let current_errors = aimd_errors.load(Ordering::Relaxed);
+                    let success_this_sec = current_success - last_success;
+                    let errors_this_sec = current_errors - last_errors;
+                    let flying = aimd_in_flight.load(Ordering::Relaxed);
+                    let current_target = aimd_target.load(Ordering::Relaxed);
 
-            last_calls = current_calls;
+                    let new_target = if errors_this_sec == 0 && success_this_sec > 0 {
+                        last_good_concurrency = current_target;
+                        (current_target + 10).min(max_in_flight)
+                    } else if errors_this_sec > 0 {
+                        last_good_concurrency.max(10)
+                    } else {
+                        current_target
+                    };
+                    aimd_target.store(new_target, Ordering::Relaxed);
+
+                    let p50 = hist.value_at_quantile(0.5);
+                    let p99 = hist.value_at_quantile(0.99);
+
+                    aimd_pb.set_message(format!(
+                        "{}/s | p50: {}ms p99: {}ms | Err: {} | Target: {} | Flying: {}",
+                        success_this_sec, p50, p99, current_errors, new_target, flying
+                    ));
+
+                    last_success = current_success;
+                    last_errors = current_errors;
+                }
+                Some(latency) = latency_rx.recv() => {
+                    let _ = hist.record(latency);
+                }
+            }
         }
     });
 
-    let mut handles = Vec::new();
+    // Main loop - spawn tasks up to concurrency target
+    let mut tasks = JoinSet::new();
     while running.load(Ordering::SeqCst) {
-        limiter.acquire().await;
+        let target = concurrency_target.load(Ordering::Relaxed);
+        let current = in_flight.load(Ordering::Relaxed);
 
-        if !running.load(Ordering::SeqCst) {
-            break;
-        }
-
-        while in_flight.load(Ordering::Relaxed) >= max_in_flight {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-            if !running.load(Ordering::SeqCst) {
-                break;
+        // Spawn tasks up to target
+        while current < target && running.load(Ordering::SeqCst) {
+            let payer_id = rand::random::<u32>() % num_accounts + 1;
+            let mut payee_id = rand::random::<u32>() % num_accounts + 1;
+            while payee_id == payer_id {
+                payee_id = rand::random::<u32>() % num_accounts + 1;
             }
-        }
 
-        if !running.load(Ordering::SeqCst) {
-            break;
-        }
+            let c = client.clone();
+            let total = total_calls.clone();
+            let success = success_count.clone();
+            let errors = error_count.clone();
+            let duration_sum = total_duration.clone();
+            let retries_sum = total_retries.clone();
+            let flying = in_flight.clone();
+            let lat_tx = latency_tx.clone();
 
-        let payer_id = rand::random::<u32>() % num_accounts + 1;
-        let mut payee_id = rand::random::<u32>() % num_accounts + 1;
-        while payee_id == payer_id {
-            payee_id = rand::random::<u32>() % num_accounts + 1;
-        }
+            flying.fetch_add(1, Ordering::Relaxed);
 
-        let c = client.clone();
-        let total = total_calls.clone();
-        let success = success_count.clone();
-        let errors = error_count.clone();
-        let duration_sum = total_duration.clone();
-        let retries_sum = total_retries.clone();
-        let flying = in_flight.clone();
+            tasks.spawn(async move {
+                let result = lambda::invoke::<_, tpcb::Response>(&c, tpcb::Request {
+                    payer_id, payee_id, amount: 1,
+                }).await;
 
-        flying.fetch_add(1, Ordering::Relaxed);
+                flying.fetch_sub(1, Ordering::Relaxed);
+                total.fetch_add(1, Ordering::Relaxed);
 
-        let handle = tokio::spawn(async move {
-            let result = lambda::invoke::<_, tpcb::Response>(
-                &c,
-                tpcb::Request {
-                    payer_id,
-                    payee_id,
-                    amount: 1,
-                },
-            )
-            .await;
-
-            flying.fetch_sub(1, Ordering::Relaxed);
-            total.fetch_add(1, Ordering::Relaxed);
-
-            match result {
-                Ok(response) => {
-                    if response.error.is_some() {
-                        errors.fetch_add(1, Ordering::Relaxed);
-                    } else {
-                        success.fetch_add(1, Ordering::Relaxed);
+                match result {
+                    Ok(response) => {
+                        if response.error.is_some() {
+                            errors.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            success.fetch_add(1, Ordering::Relaxed);
+                        }
+                        if let Some(d) = response.duration {
+                            duration_sum.fetch_add(d, Ordering::Relaxed);
+                            let _ = lat_tx.send(d);
+                        }
+                        if let Some(r) = response.retries { retries_sum.fetch_add(r as u64, Ordering::Relaxed); }
                     }
-
-                    if let Some(duration) = response.duration {
-                        duration_sum.fetch_add(duration, Ordering::Relaxed);
-                    }
-
-                    if let Some(retries) = response.retries {
-                        retries_sum.fetch_add(retries as u64, Ordering::Relaxed);
-                    }
+                    Err(_) => { errors.fetch_add(1, Ordering::Relaxed); }
                 }
-                Err(_) => {
-                    errors.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        });
+            });
+            break; // Spawn one at a time, let loop re-check
+        }
 
-        handles.push(handle);
+        // Process completed tasks
+        match tokio::time::timeout(Duration::from_millis(10), tasks.join_next()).await {
+            Ok(Some(_)) => {}
+            _ => {}
+        }
     }
 
+    // Drain remaining tasks
     pb.set_message("Waiting for in-flight requests to complete...");
-    for handle in handles {
-        let _ = handle.await;
-    }
+    while tasks.join_next().await.is_some() {}
 
-    stats_handle.abort();
+    aimd_handle.abort();
     pb.finish_and_clear();
 
     let elapsed = start.elapsed();
