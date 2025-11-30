@@ -1,11 +1,10 @@
 use crate::{
     credentials::CredentialCache,
     db,
-    lambda::{self, greeting, tpcb},
+    lambda::{self, greeting, tpcb, ClientPool},
     stress,
 };
 use anyhow::Result;
-use aws_sdk_lambda::Client;
 
 #[derive(sqlx::FromRow)]
 struct Transaction {
@@ -16,13 +15,13 @@ struct Transaction {
     created_at: chrono::NaiveDateTime,
 }
 
-pub async fn run_test(client: &Client, creds: &CredentialCache, chapter: u32) -> Result<()> {
+pub async fn run_test(client_pool: &ClientPool, creds: &CredentialCache, chapter: u32) -> Result<()> {
     match chapter {
-        0 => test_chapter0(client).await,
-        1 => test_chapter1(client).await,
-        2 => test_chapter2(client).await,
-        3 => test_chapter3(client, creds).await,
-        4 => test_chapter4(client).await,
+        0 => test_chapter0(client_pool).await,
+        1 => test_chapter1(client_pool).await,
+        2 => test_chapter2(client_pool).await,
+        3 => test_chapter3(client_pool, creds).await,
+        4 => test_chapter4(client_pool).await,
         _ => {
             eprintln!("Unknown test chapter: {}", chapter);
             std::process::exit(1);
@@ -30,14 +29,14 @@ pub async fn run_test(client: &Client, creds: &CredentialCache, chapter: u32) ->
     }
 }
 
-async fn test_chapter0(client: &Client) -> Result<()> {
+async fn test_chapter0(client_pool: &ClientPool) -> Result<()> {
     println!("Testing Chapter 0: Basic Lambda invocation with DSQL connection\n");
 
     let req = greeting::Request {
         name: "reinvent".to_string(),
     };
 
-    let response: greeting::Response = lambda::invoke(client, &req).await?;
+    let response: greeting::Response = lambda::invoke(client_pool.get(), &req).await?;
     println!("Response: {:?}", response.greeting);
 
     if response.greeting.contains("connected to DSQL successfully") {
@@ -49,7 +48,7 @@ async fn test_chapter0(client: &Client) -> Result<()> {
     Ok(())
 }
 
-async fn test_chapter1(client: &Client) -> Result<()> {
+async fn test_chapter1(client_pool: &ClientPool) -> Result<()> {
     println!("Testing Chapter 1: Money transfer\n");
 
     let req = tpcb::Request {
@@ -58,7 +57,7 @@ async fn test_chapter1(client: &Client) -> Result<()> {
         amount: 10,
     };
 
-    let response: tpcb::Response = lambda::invoke(client, req).await?;
+    let response: tpcb::Response = lambda::invoke(client_pool.get(), req).await?;
 
     if let Some(balance) = response.balance {
         println!("✅ Chapter 1 test PASSED");
@@ -70,14 +69,14 @@ async fn test_chapter1(client: &Client) -> Result<()> {
     Ok(())
 }
 
-async fn test_chapter2(client: &Client) -> Result<()> {
+async fn test_chapter2(client_pool: &ClientPool) -> Result<()> {
     println!("Testing Chapter 2: Stress Test - 10K Invocations\n");
-    stress::run_stress_test(client, 10_000, 1_000, 1_000).await?;
+    stress::run_stress_test(client_pool, 10_000, 1_000, 1_000).await?;
     println!("✅ Chapter 2 test complete");
     Ok(())
 }
 
-async fn test_chapter3(client: &Client, creds: &CredentialCache) -> Result<()> {
+async fn test_chapter3(client_pool: &ClientPool, creds: &CredentialCache) -> Result<()> {
     println!("Testing Chapter 3: Transaction history with UUID primary keys\n");
 
     let req = tpcb::Request {
@@ -90,7 +89,7 @@ async fn test_chapter3(client: &Client, creds: &CredentialCache) -> Result<()> {
         "Invoking Lambda function 'reinvent-dat401' with payload '{:?}'",
         req
     );
-    let response: tpcb::Response = lambda::invoke(client, req).await?;
+    let response: tpcb::Response = lambda::invoke(client_pool.get(), req).await?;
 
     if let Some(balance) = response.balance {
         println!("Response: balance = {}", balance);
@@ -136,9 +135,9 @@ async fn test_chapter3(client: &Client, creds: &CredentialCache) -> Result<()> {
     Ok(())
 }
 
-async fn test_chapter4(client: &Client) -> Result<()> {
+async fn test_chapter4(client_pool: &ClientPool) -> Result<()> {
     println!("Testing Chapter 4: 100K Invocations\n");
-    stress::run_stress_test(client, 1_000_000, 10_000, 1_000_000).await?;
+    stress::run_stress_test(client_pool, 1_000_000, 10_000, 1_000_000).await?;
     println!("✅ Chapter 4 test complete");
     Ok(())
 }

@@ -1,6 +1,5 @@
-use crate::lambda::{self, tpcb};
+use crate::lambda::{self, tpcb, ClientPool};
 use anyhow::Result;
-use aws_sdk_lambda::Client;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -9,7 +8,7 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 
 pub async fn run_stress_test(
-    client: &Client,
+    client_pool: &ClientPool,
     total_calls: usize,
     parallel_calls: usize,
     num_accounts: u32,
@@ -18,7 +17,7 @@ pub async fn run_stress_test(
     println!("Max parallel requests: {}", parallel_calls);
     println!();
 
-    let client = Arc::new(client.clone());
+    let client_pool = client_pool.clone();
 
     let m = MultiProgress::new();
 
@@ -55,9 +54,9 @@ pub async fn run_stress_test(
                     payee_id = rand::random::<u32>() % num_accounts + 1;
                 }
 
-                let c = client.clone();
+                let pool = client_pool.clone();
                 tasks.spawn(async move {
-                    lambda::invoke::<_, tpcb::Response>(&c, tpcb::Request {
+                    lambda::invoke::<_, tpcb::Response>(pool.get(), tpcb::Request {
                         payer_id,
                         payee_id,
                         amount: 1,
@@ -181,7 +180,7 @@ pub async fn run_stress_test(
 }
 
 pub async fn run_sustained_load(
-    client: &Client,
+    client_pool: &ClientPool,
     invocations_per_sec: u32,
     num_accounts: u32,
 ) -> Result<()> {
@@ -194,7 +193,7 @@ pub async fn run_sustained_load(
     println!("Press Ctrl-C to stop...");
     println!();
 
-    let client = Arc::new(client.clone());
+    let client_pool = client_pool.clone();
     let max_in_flight = (invocations_per_sec * 50) as usize;
 
     let running = Arc::new(AtomicBool::new(true));
@@ -314,7 +313,7 @@ pub async fn run_sustained_load(
                 payee_id = rand::random::<u32>() % num_accounts + 1;
             }
 
-            let c = client.clone();
+            let pool = client_pool.clone();
             let total = total_calls.clone();
             let success = success_count.clone();
             let errors = error_count.clone();
@@ -328,7 +327,7 @@ pub async fn run_sustained_load(
             flying.fetch_add(1, Ordering::Relaxed);
 
             tasks.spawn(async move {
-                let result = lambda::invoke::<_, tpcb::Response>(&c, tpcb::Request {
+                let result = lambda::invoke::<_, tpcb::Response>(pool.get(), tpcb::Request {
                     payer_id, payee_id, amount: 1,
                 }).await;
 

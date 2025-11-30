@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -8,6 +9,24 @@ use serde::{de::DeserializeOwned, Serialize};
 use crate::credentials::CredentialCache;
 
 const FUNCTION_NAME: &str = "reinvent-dat401";
+
+/// Pool of Lambda clients to distribute load across multiple HTTP connections
+#[derive(Clone)]
+pub struct ClientPool {
+    inner: std::sync::Arc<ClientPoolInner>,
+}
+
+struct ClientPoolInner {
+    clients: Vec<Client>,
+    counter: AtomicUsize,
+}
+
+impl ClientPool {
+    pub fn get(&self) -> &Client {
+        let idx = self.inner.counter.fetch_add(1, Ordering::Relaxed) % self.inner.clients.len();
+        &self.inner.clients[idx]
+    }
+}
 
 pub mod greeting {
     use serde::{Deserialize, Serialize};
@@ -43,7 +62,7 @@ pub mod tpcb {
     }
 }
 
-pub async fn client(creds: &CredentialCache) -> Result<Client> {
+pub async fn client_pool(creds: &CredentialCache, size: usize) -> Result<ClientPool> {
     let credentials = creds.get_credentials().await?;
     let credentials_provider =
         aws_credential_types::provider::SharedCredentialsProvider::new(credentials);
@@ -58,7 +77,14 @@ pub async fn client(creds: &CredentialCache) -> Result<Client> {
         .retry_config(RetryConfig::standard().with_max_attempts(3))
         .load()
         .await;
-    Ok(Client::new(&config))
+
+    let clients = (0..size).map(|_| Client::new(&config)).collect();
+    Ok(ClientPool {
+        inner: std::sync::Arc::new(ClientPoolInner {
+            clients,
+            counter: AtomicUsize::new(0),
+        }),
+    })
 }
 
 pub async fn invoke<T: Serialize, R: DeserializeOwned>(client: &Client, payload: T) -> Result<R> {

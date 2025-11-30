@@ -18,12 +18,10 @@ async fn main() -> Result<()> {
     // Create the credential cache once (shared between Lambda and DB)
     let credential_cache = credentials::CredentialCache::new().await?;
 
-    // Create the Lambda client using the shared credentials
-    let client = lambda::client(&credential_cache).await?;
-
     match args.command {
         cli::Command::TestChapter { chapter } => {
-            tests::run_test(&client, &credential_cache, chapter).await?;
+            let client_pool = lambda::client_pool(&credential_cache, 1).await?;
+            tests::run_test(&client_pool, &credential_cache, chapter).await?;
         }
         cli::Command::Setup { accounts } => {
             setup::setup_schema(&credential_cache, accounts).await?;
@@ -32,7 +30,9 @@ async fn main() -> Result<()> {
             setup::setup_chapter4(&credential_cache).await?;
         }
         cli::Command::SustainedLoad { invocations_per_sec, accounts } => {
-            stress::run_sustained_load(&client, invocations_per_sec, accounts).await?;
+            // Use 16 clients to distribute load across multiple HTTP connections
+            let client_pool = lambda::client_pool(&credential_cache, 16).await?;
+            stress::run_sustained_load(&client_pool, invocations_per_sec, accounts).await?;
         }
     }
 
