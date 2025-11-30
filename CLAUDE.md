@@ -8,9 +8,13 @@ This is a re:Invent talk repository (DAT401) demonstrating Amazon Aurora DSQL de
 
 ## Repository Structure
 
-- **Chapter Directories (`ch01/`, `ch02/`, `ch03/`)**: Self-contained snapshots showing the complete state after each chapter. Each contains:
+- **Chapter Directories (`ch01/`, `ch02/`, `ch03/`, `ch04/`)**: Self-contained snapshots showing the complete state after each chapter. Each contains:
   - `cdk/` - AWS CDK infrastructure with DSQL cluster and Lambda function deployment
   - `lambda/` - TypeScript Lambda function source code
+  - **ch01**: Basic money transfer API with transactions
+  - **ch02**: OCC retry logic for handling concurrency conflicts
+  - **ch03**: Transaction history with UUID primary keys
+  - **ch04**: Refactored with Drizzle ORM (type-safe queries)
 
 - **`starter-kit/`**: Base project template used as starting point for the talk
 
@@ -32,13 +36,16 @@ The compiled binary will be at `target/release/helper`.
 
 ```bash
 # Test a specific chapter (0, 1, 2, 3, or 4)
-cargo run --release -- --test-chapter <N>
+cargo run --release -- test-chapter -c <N>
 
 # Setup Chapter 4 (creates 1M accounts for stress testing)
-cargo run --release -- --setup-ch04
+cargo run --release -- setup-ch04
+
+# Setup schema with custom account count
+cargo run --release -- setup --accounts 1000
 ```
 
-Note: Using `cargo run --release --` automatically builds if needed and runs the binary with arguments after `--`.
+Note: Using `cargo run --release --` automatically builds if needed and runs the binary with subcommands/arguments after `--`.
 
 ### CDK Deployment
 
@@ -285,13 +292,71 @@ lambdaFunction.addToRolePolicy(
 
 **Important**: Use `NodejsFunction` construct which bundles TypeScript with esbuild automatically, avoiding Docker dependency.
 
+### Drizzle ORM Pattern (ch04)
+
+Chapter 4 demonstrates using Drizzle ORM for type-safe database queries:
+
+```typescript
+// schema.ts - Define tables with Drizzle
+import { pgTable, integer, uuid, timestamp } from "drizzle-orm/pg-core";
+
+export const accounts = pgTable("accounts", {
+  id: integer("id").primaryKey(),
+  balance: integer("balance").notNull(),
+});
+
+export const transactions = pgTable("transactions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  payerId: integer("payer_id").notNull(),
+  payeeId: integer("payee_id").notNull(),
+  amount: integer("amount").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+```
+
+```typescript
+// db.ts - Initialize Drizzle with pg Pool
+import { drizzle } from "drizzle-orm/node-postgres";
+import * as schema from "./schema";
+
+const pool = new Pool({ /* IAM auth config */ });
+export const db = drizzle(pool, { schema });
+```
+
+```typescript
+// index.ts - Type-safe queries with Drizzle
+import { eq, sql } from "drizzle-orm";
+import { accounts, transactions } from "./schema";
+
+// Update with SQL expression
+await tx
+  .update(accounts)
+  .set({ balance: sql`${accounts.balance} - ${amount}` })
+  .where(eq(accounts.id, payerId))
+  .returning({ balance: accounts.balance });
+
+// Insert with type inference
+await tx.insert(transactions).values({
+  payerId,
+  payeeId,
+  amount,
+});
+```
+
+**Benefits of Drizzle ORM**:
+- Type-safe queries with full TypeScript inference
+- Schema defined in code (no separate migration files needed)
+- Uses existing `pg` driver (works with IAM auth)
+- Lightweight bundle size (good for Lambda cold starts)
+- Built-in transaction support with `db.transaction()`
+
 ## Testing Architecture
 
 The Rust helper tool provides:
 
-- **Single transaction tests**: `--test-chapter <N>`
+- **Single transaction tests**: `test-chapter -c <N>`
 - **Stress tests**: 10K parallel requests (ch02), 1M parallel requests with 50 workers (ch04)
-- **Setup operations**: `--setup-ch04` creates 1M test accounts
+- **Setup operations**: `setup-ch04` creates 1M test accounts, `setup --accounts N` creates N accounts
 
 The stress tests use:
 - 64 Tokio worker threads for parallelism
@@ -306,7 +371,7 @@ When modifying a chapter:
 1. Make changes to `lambda/src/index.ts` or `lambda/src/db.ts`
 2. Deploy with `cd cdk && npx cdk deploy` (handles TypeScript compilation automatically)
 3. If database schema changes, run SQL commands via psql
-4. Test with `cargo run --release -- --test-chapter <N>`
+4. Test with `cargo run --release -- test-chapter -c <N>`
 
 **Note**: CDK automatically detects Lambda code changes and redeploys. No need to manually build TypeScript.
 
