@@ -277,14 +277,26 @@ pub async fn run_sustained_load(
         }
     });
 
-    // Main loop - spawn tasks up to concurrency target
+    // Main loop - spawn tasks up to concurrency target, rate limited
     let mut tasks = JoinSet::new();
+    let mut spawned_this_sec = 0usize;
+    let mut last_reset = Instant::now();
+    let target_rate = invocations_per_sec as usize;
+
     while running.load(Ordering::SeqCst) {
+        // Reset rate limit counter every second
+        if last_reset.elapsed() >= Duration::from_secs(1) {
+            spawned_this_sec = 0;
+            last_reset = Instant::now();
+        }
+
         let target = concurrency_target.load(Ordering::Relaxed);
         let current = in_flight.load(Ordering::Relaxed);
 
-        // Spawn tasks up to target
-        let to_spawn = target.saturating_sub(current);
+        // Spawn tasks up to concurrency target AND rate limit
+        let to_spawn = target.saturating_sub(current)
+            .min(target_rate.saturating_sub(spawned_this_sec));
+
         for _ in 0..to_spawn {
             if !running.load(Ordering::SeqCst) { break; }
 
@@ -329,6 +341,7 @@ pub async fn run_sustained_load(
                     Err(_) => { errors.fetch_add(1, Ordering::Relaxed); }
                 }
             });
+            spawned_this_sec += 1;
         }
 
         // Process completed tasks
