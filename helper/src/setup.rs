@@ -1,10 +1,11 @@
+use crate::credentials::CredentialCache;
 use crate::db;
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 
-pub async fn setup_schema(num_accounts: u32) -> Result<()> {
+pub async fn setup_schema(creds: &CredentialCache, num_accounts: u32) -> Result<()> {
     println!("Setting up database schema...");
-    let pool = db::get_pool().await?;
+    let pool = db::get_pool(creds).await?;
 
     // Create accounts table
     sqlx::query(
@@ -66,11 +67,11 @@ pub async fn setup_schema(num_accounts: u32) -> Result<()> {
     Ok(())
 }
 
-pub async fn setup_chapter4() -> Result<()> {
+pub async fn setup_chapter4(creds: &CredentialCache) -> Result<()> {
     println!("Setting up Chapter 4: Creating 1M accounts\n");
 
     const TARGET_ACCOUNTS: i64 = 1_000_000;
-    let pool = db::get_pool().await?;
+    let pool = db::get_pool(creds).await?;
 
     // Check current account count
     let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM accounts")

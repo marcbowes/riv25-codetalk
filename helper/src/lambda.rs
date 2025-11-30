@@ -1,10 +1,11 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use async_once_cell::OnceCell;
 use aws_config::{retry::RetryConfig, timeout::TimeoutConfig, BehaviorVersion};
 use aws_sdk_lambda::{error::SdkError, primitives::Blob, Client};
 use serde::{de::DeserializeOwned, Serialize};
+
+use crate::credentials::CredentialCache;
 
 const FUNCTION_NAME: &str = "reinvent-dat401";
 
@@ -42,56 +43,25 @@ pub mod tpcb {
     }
 }
 
-// Wrapper that implements ProvideCredentials using our cache
-#[derive(Clone, Debug)]
-struct CachedCredentialsProvider {
-    cache: &'static crate::credentials::CredentialCache,
+pub async fn client(creds: &CredentialCache) -> Result<Client> {
+    let credentials = creds.get_credentials().await?;
+    let credentials_provider =
+        aws_credential_types::provider::SharedCredentialsProvider::new(credentials);
+
+    let config = aws_config::defaults(BehaviorVersion::latest())
+        .credentials_provider(credentials_provider)
+        .timeout_config(
+            TimeoutConfig::builder()
+                .connect_timeout(Duration::from_secs(30))
+                .build(),
+        )
+        .retry_config(RetryConfig::standard().with_max_attempts(1))
+        .load()
+        .await;
+    Ok(Client::new(&config))
 }
 
-impl aws_credential_types::provider::ProvideCredentials for CachedCredentialsProvider {
-    fn provide_credentials<'a>(
-        &'a self,
-    ) -> aws_credential_types::provider::future::ProvideCredentials<'a>
-    where
-        Self: 'a,
-    {
-        aws_credential_types::provider::future::ProvideCredentials::new(async move {
-            self.cache
-                .get_credentials()
-                .await
-                .map_err(|e| aws_credential_types::provider::error::CredentialsError::not_loaded(e))
-        })
-    }
-}
-
-static CLIENT: OnceCell<Client> = OnceCell::new();
-
-pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Result<R> {
-    let client = CLIENT
-        .get_or_init(async {
-            let cache = crate::credentials::get_credential_cache().await;
-
-            // Create a credentials provider that uses our cache
-            let credentials_provider =
-                aws_credential_types::provider::SharedCredentialsProvider::new(
-                    CachedCredentialsProvider { cache },
-                );
-
-            let config = aws_config::defaults(BehaviorVersion::latest())
-                .credentials_provider(credentials_provider)
-                .timeout_config(
-                    TimeoutConfig::builder()
-                        .connect_timeout(Duration::from_secs(30))
-                        .build(),
-                )
-                .retry_config(RetryConfig::standard().with_max_attempts(1))
-                .load()
-                .await;
-            Client::new(&config)
-        })
-        .await
-        .clone();
-
+pub async fn invoke<T: Serialize, R: DeserializeOwned>(client: &Client, payload: T) -> Result<R> {
     let payload_str = serde_json::to_string(&payload)?;
     let response = client
         .invoke()
@@ -102,11 +72,9 @@ pub async fn invoke_lambda<T: Serialize, R: DeserializeOwned>(payload: T) -> Res
     let response = match response {
         Ok(r) => r,
         Err(err) => {
-            match err {
-                SdkError::DispatchFailure(ref d) => tracing::error!(?d, "dispatch failure"),
-                _ => {}
+            if let SdkError::DispatchFailure(ref d) = err {
+                tracing::error!(?d, "dispatch failure");
             }
-
             return Err(err)?;
         }
     };

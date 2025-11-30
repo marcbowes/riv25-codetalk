@@ -24,9 +24,9 @@ pub enum Command {
     SetupCh04,
     /// Run sustained load until Ctrl-C
     SustainedLoad {
-        /// Number of parallel requests to maintain
-        #[arg(short, long, default_value = "100")]
-        parallel: usize,
+        /// Target invocations per second
+        #[arg(short = 'i', long, default_value = "100")]
+        invocations_per_sec: u32,
         /// Number of accounts to use for random transfers
         #[arg(short, long, default_value = "1000")]
         accounts: u32,

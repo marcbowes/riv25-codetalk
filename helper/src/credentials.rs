@@ -1,5 +1,4 @@
 use anyhow::Result;
-use async_once_cell::OnceCell;
 use aws_config::BehaviorVersion;
 use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::Credentials;
@@ -20,7 +19,7 @@ pub struct CredentialCache {
 }
 
 impl CredentialCache {
-    async fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
         let provider = config.credentials_provider().unwrap().clone();
 
@@ -46,7 +45,7 @@ impl CredentialCache {
         // Need to fetch new credentials
         let mut cached = self.cached.write().await;
 
-        // Double-check in case another thread just updated
+        // Double-check in case another task just updated
         if let Some(cached_creds) = cached.as_ref() {
             let refresh_threshold = SystemTime::now() + Duration::from_secs(300);
             if cached_creds.expires_at > refresh_threshold {
@@ -64,28 +63,13 @@ impl CredentialCache {
         // Determine expiry time
         let expires_at = credentials
             .expiry()
-            .map(|exp| exp.into())
-            .unwrap_or_else(|| SystemTime::now() + Duration::from_secs(3600)); // Default 1 hour
+            .unwrap_or_else(|| SystemTime::now() + Duration::from_secs(3600));
 
         *cached = Some(CachedCredentials {
             credentials: credentials.clone(),
             expires_at,
         });
 
-        tracing::debug!("Refreshed AWS credentials, expires at {:?}", expires_at);
-
         Ok(credentials)
     }
-}
-
-static CREDENTIAL_CACHE: OnceCell<CredentialCache> = OnceCell::new();
-
-pub async fn get_credential_cache() -> &'static CredentialCache {
-    CREDENTIAL_CACHE
-        .get_or_init(async {
-            CredentialCache::new()
-                .await
-                .expect("Failed to initialize credential cache")
-        })
-        .await
 }

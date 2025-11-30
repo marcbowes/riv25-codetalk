@@ -1,51 +1,35 @@
+use crate::credentials::CredentialCache;
 use anyhow::Result;
-use aws_sdk_dsql::auth_token::{AuthToken, AuthTokenGenerator, Config};
+use aws_config::BehaviorVersion;
+use aws_sdk_dsql::auth_token::{AuthTokenGenerator, Config};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Pool, Postgres};
 
-async fn generate_token(cluster_endpoint: &str, region: &str, is_admin: bool) -> Result<AuthToken> {
-    let cache = crate::credentials::get_credential_cache().await;
+pub async fn get_pool(creds: &CredentialCache) -> Result<Pool<Postgres>> {
+    let cluster_endpoint = std::env::var("CLUSTER_ENDPOINT")?;
+    let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-west-2".to_string());
 
-    // Get cached credentials
-    let credentials = cache.get_credentials().await?;
+    let credentials = creds.get_credentials().await?;
+    let credentials_provider =
+        aws_credential_types::provider::SharedCredentialsProvider::new(credentials);
 
-    // Build SDK config with our cached credentials
-    let credentials_provider = aws_credential_types::provider::SharedCredentialsProvider::new(credentials);
-    let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+    let sdk_config = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials_provider)
-        .region(aws_config::Region::new(region.to_string()))
+        .region(aws_config::Region::new(region.clone()))
         .load()
         .await;
 
     let config = Config::builder()
-        .hostname(cluster_endpoint)
-        .region(aws_config::Region::new(region.to_string()))
+        .hostname(&cluster_endpoint)
+        .region(aws_config::Region::new(region))
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build config: {}", e))?;
 
     let signer = AuthTokenGenerator::new(config);
-
-    // Use the SDK config with cached credentials
-    let token = if is_admin {
-        signer
-            .db_connect_admin_auth_token(&sdk_config)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to generate admin token: {}", e))?
-    } else {
-        signer
-            .db_connect_auth_token(&sdk_config)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to generate token: {}", e))?
-    };
-
-    Ok(token)
-}
-
-pub async fn get_pool() -> Result<Pool<Postgres>> {
-    let cluster_endpoint = std::env::var("CLUSTER_ENDPOINT")?;
-    let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-west-2".to_string());
-
-    let token = generate_token(&cluster_endpoint, &region, true).await?;
+    let token = signer
+        .db_connect_admin_auth_token(&sdk_config)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to generate admin token: {}", e))?;
 
     let options = PgConnectOptions::new()
         .host(&cluster_endpoint)
