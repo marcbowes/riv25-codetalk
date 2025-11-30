@@ -40,6 +40,14 @@ export class Dat401Stack extends cdk.Stack {
       },
     );
 
+    // Create a version and add provisioned concurrency
+    const version = lambdaFunction.currentVersion;
+    new lambda.Alias(this, "ReinventDat401Alias", {
+      aliasName: "live",
+      version,
+      provisionedConcurrentExecutions: 10000,
+    });
+
     // Add DSQL DbConnect permission for myapp role
     lambdaFunction.addToRolePolicy(
       new iam.PolicyStatement({
