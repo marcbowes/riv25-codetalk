@@ -202,6 +202,7 @@ pub async fn run_sustained_load(
     let success_count = Arc::new(AtomicUsize::new(0));
     let error_count = Arc::new(AtomicUsize::new(0));
     let lambda_error_count = Arc::new(AtomicUsize::new(0)); // Only Lambda errors, for AIMD
+    let occ_error_count = Arc::new(AtomicUsize::new(0)); // OCC errors (40001)
     let total_duration = Arc::new(AtomicU64::new(0));
     let total_retries = Arc::new(AtomicU64::new(0));
     let in_flight = Arc::new(AtomicUsize::new(0));
@@ -229,6 +230,7 @@ pub async fn run_sustained_load(
     let aimd_success = success_count.clone();
     let aimd_errors = lambda_error_count.clone(); // Only Lambda errors for AIMD
     let aimd_display_errors = error_count.clone(); // All errors for display
+    let aimd_occ_errors = occ_error_count.clone(); // OCC errors for display
     let aimd_target = concurrency_target.clone();
     let aimd_pb = pb.clone();
     let aimd_in_flight = in_flight.clone();
@@ -252,6 +254,7 @@ pub async fn run_sustained_load(
             let current_success = aimd_success.load(Ordering::Relaxed);
             let current_lambda_errors = aimd_errors.load(Ordering::Relaxed);
             let display_errors = aimd_display_errors.load(Ordering::Relaxed);
+            let occ_errors = aimd_occ_errors.load(Ordering::Relaxed);
             let success_this_sec = current_success - last_success;
             let lambda_errors_this_sec = current_lambda_errors - last_errors;
             let flying = aimd_in_flight.load(Ordering::Relaxed);
@@ -272,8 +275,8 @@ pub async fn run_sustained_load(
             let p99 = hist.value_at_quantile(0.99);
 
             aimd_pb.set_message(format!(
-                "{}/s | p50: {}ms p99: {}ms | Err: {} | Target: {} | Inflight: {}",
-                success_this_sec, p50, p99, display_errors, new_target, flying
+                "{}/s | p50: {}ms p99: {}ms | Err: {} OCC: {} | Target: {} | Inflight: {}",
+                success_this_sec, p50, p99, display_errors, occ_errors, new_target, flying
             ));
 
             last_success = current_success;
@@ -315,6 +318,7 @@ pub async fn run_sustained_load(
             let success = success_count.clone();
             let errors = error_count.clone();
             let lambda_errors = lambda_error_count.clone();
+            let occ_errors = occ_error_count.clone();
             let duration_sum = total_duration.clone();
             let retries_sum = total_retries.clone();
             let flying = in_flight.clone();
@@ -334,7 +338,10 @@ pub async fn run_sustained_load(
                     Ok(response) => {
                         if response.error.is_some() {
                             errors.fetch_add(1, Ordering::Relaxed);
-                            lambda_errors.fetch_add(1, Ordering::Relaxed); // Lambda error
+                            lambda_errors.fetch_add(1, Ordering::Relaxed);
+                            if response.error_code.as_deref() == Some("40001") {
+                                occ_errors.fetch_add(1, Ordering::Relaxed);
+                            }
                         } else {
                             success.fetch_add(1, Ordering::Relaxed);
                         }
