@@ -25,6 +25,9 @@ async fn main() -> Result<()> {
         cli::Command::SetupCh04 => {
             setup::setup_chapter4().await?;
         }
+        cli::Command::SustainedLoad { parallel, accounts } => {
+            stress::run_sustained_load(parallel, accounts).await?;
+        }
     }
 
     Ok(())
