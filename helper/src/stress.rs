@@ -201,7 +201,7 @@ pub async fn run_sustained_load(
     let total_calls = Arc::new(AtomicUsize::new(0));
     let success_count = Arc::new(AtomicUsize::new(0));
     let error_count = Arc::new(AtomicUsize::new(0));
-    let lambda_error_count = Arc::new(AtomicUsize::new(0)); // Only Lambda errors, for AIMD
+    let dispatch_error_count = Arc::new(AtomicUsize::new(0)); // Failed to call Lambda - triggers AIMD backoff
     let occ_error_count = Arc::new(AtomicUsize::new(0)); // OCC errors (40001)
     let total_duration = Arc::new(AtomicU64::new(0));
     let total_retries = Arc::new(AtomicU64::new(0));
@@ -225,10 +225,10 @@ pub async fn run_sustained_load(
     let pb = m.add(ProgressBar::new_spinner());
     pb.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}").unwrap());
 
-    // AIMD controller - adjusts concurrency based on success/errors
+    // AIMD controller - adjusts concurrency based on dispatch errors only
     let aimd_running = running.clone();
     let aimd_success = success_count.clone();
-    let aimd_errors = lambda_error_count.clone(); // Only Lambda errors for AIMD
+    let aimd_errors = dispatch_error_count.clone(); // Only dispatch failures trigger AIMD backoff
     let aimd_display_errors = error_count.clone(); // All errors for display
     let aimd_occ_errors = occ_error_count.clone(); // OCC errors for display
     let aimd_target = concurrency_target.clone();
@@ -252,19 +252,20 @@ pub async fn run_sustained_load(
             }
 
             let current_success = aimd_success.load(Ordering::Relaxed);
-            let current_lambda_errors = aimd_errors.load(Ordering::Relaxed);
+            let current_dispatch_errors = aimd_errors.load(Ordering::Relaxed);
             let display_errors = aimd_display_errors.load(Ordering::Relaxed);
             let occ_errors = aimd_occ_errors.load(Ordering::Relaxed);
             let success_this_sec = current_success - last_success;
-            let lambda_errors_this_sec = current_lambda_errors - last_errors;
+            let dispatch_errors_this_sec = current_dispatch_errors - last_errors;
             let flying = aimd_in_flight.load(Ordering::Relaxed);
             let current_target = aimd_target.load(Ordering::Relaxed);
 
-            // AIMD only backs off on Lambda errors, not dispatch failures
-            let new_target = if lambda_errors_this_sec == 0 && success_this_sec > 0 {
+            // AIMD: back off only on dispatch failures (couldn't reach Lambda)
+            // Any Lambda response (success or error) means we can increase
+            let new_target = if dispatch_errors_this_sec == 0 && success_this_sec > 0 {
                 last_good_concurrency = current_target;
                 (current_target + 10).min(max_in_flight)
-            } else if lambda_errors_this_sec > 0 {
+            } else if dispatch_errors_this_sec > 0 {
                 last_good_concurrency.max(10)
             } else {
                 current_target
@@ -280,7 +281,7 @@ pub async fn run_sustained_load(
             ));
 
             last_success = current_success;
-            last_errors = current_lambda_errors;
+            last_errors = current_dispatch_errors;
         }
     });
 
@@ -317,7 +318,7 @@ pub async fn run_sustained_load(
             let total = total_calls.clone();
             let success = success_count.clone();
             let errors = error_count.clone();
-            let lambda_errors = lambda_error_count.clone();
+            let dispatch_errors = dispatch_error_count.clone();
             let occ_errors = occ_error_count.clone();
             let duration_sum = total_duration.clone();
             let retries_sum = total_retries.clone();
@@ -336,11 +337,13 @@ pub async fn run_sustained_load(
 
                 match result {
                     Ok(response) => {
-                        if response.error.is_some() {
+                        // Got a response from Lambda - this is good for AIMD
+                        if let Some(ref err) = response.error {
                             errors.fetch_add(1, Ordering::Relaxed);
-                            lambda_errors.fetch_add(1, Ordering::Relaxed);
                             if response.error_code.as_deref() == Some("40001") {
                                 occ_errors.fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                tracing::warn!(error = %err, code = ?response.error_code, "Lambda error");
                             }
                         } else {
                             success.fetch_add(1, Ordering::Relaxed);
@@ -351,7 +354,11 @@ pub async fn run_sustained_load(
                         }
                         if let Some(r) = response.retries { retries_sum.fetch_add(r as u64, Ordering::Relaxed); }
                     }
-                    Err(_) => { errors.fetch_add(1, Ordering::Relaxed); } // Dispatch error, don't affect AIMD
+                    Err(_) => {
+                        // Failed to call Lambda - triggers AIMD backoff
+                        errors.fetch_add(1, Ordering::Relaxed);
+                        dispatch_errors.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             });
             spawned_this_sec += 1;
