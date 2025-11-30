@@ -55,7 +55,7 @@ pub async fn client(creds: &CredentialCache) -> Result<Client> {
                 .connect_timeout(Duration::from_secs(30))
                 .build(),
         )
-        .retry_config(RetryConfig::standard().with_max_attempts(1))
+        .retry_config(RetryConfig::standard().with_max_attempts(3))
         .load()
         .await;
     Ok(Client::new(&config))
