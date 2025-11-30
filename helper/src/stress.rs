@@ -201,6 +201,7 @@ pub async fn run_sustained_load(
     let total_calls = Arc::new(AtomicUsize::new(0));
     let success_count = Arc::new(AtomicUsize::new(0));
     let error_count = Arc::new(AtomicUsize::new(0));
+    let lambda_error_count = Arc::new(AtomicUsize::new(0)); // Only Lambda errors, for AIMD
     let total_duration = Arc::new(AtomicU64::new(0));
     let total_retries = Arc::new(AtomicU64::new(0));
     let in_flight = Arc::new(AtomicUsize::new(0));
@@ -226,7 +227,8 @@ pub async fn run_sustained_load(
     // AIMD controller - adjusts concurrency based on success/errors
     let aimd_running = running.clone();
     let aimd_success = success_count.clone();
-    let aimd_errors = error_count.clone();
+    let aimd_errors = lambda_error_count.clone(); // Only Lambda errors for AIMD
+    let aimd_display_errors = error_count.clone(); // All errors for display
     let aimd_target = concurrency_target.clone();
     let aimd_pb = pb.clone();
     let aimd_in_flight = in_flight.clone();
@@ -248,16 +250,18 @@ pub async fn run_sustained_load(
             }
 
             let current_success = aimd_success.load(Ordering::Relaxed);
-            let current_errors = aimd_errors.load(Ordering::Relaxed);
+            let current_lambda_errors = aimd_errors.load(Ordering::Relaxed);
+            let display_errors = aimd_display_errors.load(Ordering::Relaxed);
             let success_this_sec = current_success - last_success;
-            let errors_this_sec = current_errors - last_errors;
+            let lambda_errors_this_sec = current_lambda_errors - last_errors;
             let flying = aimd_in_flight.load(Ordering::Relaxed);
             let current_target = aimd_target.load(Ordering::Relaxed);
 
-            let new_target = if errors_this_sec == 0 && success_this_sec > 0 {
+            // AIMD only backs off on Lambda errors, not dispatch failures
+            let new_target = if lambda_errors_this_sec == 0 && success_this_sec > 0 {
                 last_good_concurrency = current_target;
                 (current_target + 10).min(max_in_flight)
-            } else if errors_this_sec > 0 {
+            } else if lambda_errors_this_sec > 0 {
                 last_good_concurrency.max(10)
             } else {
                 current_target
@@ -269,11 +273,11 @@ pub async fn run_sustained_load(
 
             aimd_pb.set_message(format!(
                 "{}/s | p50: {}ms p99: {}ms | Err: {} | Target: {} | Inflight: {}",
-                success_this_sec, p50, p99, current_errors, new_target, flying
+                success_this_sec, p50, p99, display_errors, new_target, flying
             ));
 
             last_success = current_success;
-            last_errors = current_errors;
+            last_errors = current_lambda_errors;
         }
     });
 
@@ -310,6 +314,7 @@ pub async fn run_sustained_load(
             let total = total_calls.clone();
             let success = success_count.clone();
             let errors = error_count.clone();
+            let lambda_errors = lambda_error_count.clone();
             let duration_sum = total_duration.clone();
             let retries_sum = total_retries.clone();
             let flying = in_flight.clone();
@@ -329,6 +334,7 @@ pub async fn run_sustained_load(
                     Ok(response) => {
                         if response.error.is_some() {
                             errors.fetch_add(1, Ordering::Relaxed);
+                            lambda_errors.fetch_add(1, Ordering::Relaxed); // Lambda error
                         } else {
                             success.fetch_add(1, Ordering::Relaxed);
                         }
@@ -338,7 +344,7 @@ pub async fn run_sustained_load(
                         }
                         if let Some(r) = response.retries { retries_sum.fetch_add(r as u64, Ordering::Relaxed); }
                     }
-                    Err(_) => { errors.fetch_add(1, Ordering::Relaxed); }
+                    Err(_) => { errors.fetch_add(1, Ordering::Relaxed); } // Dispatch error, don't affect AIMD
                 }
             });
             spawned_this_sec += 1;
