@@ -237,44 +237,43 @@ pub async fn run_sustained_load(
         let mut last_success = 0usize;
         let mut last_errors = 0usize;
         let mut last_good_concurrency = 10usize;
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
 
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                    if !aimd_running.load(Ordering::SeqCst) { break; }
+        while aimd_running.load(Ordering::SeqCst) {
+            interval.tick().await;
 
-                    let current_success = aimd_success.load(Ordering::Relaxed);
-                    let current_errors = aimd_errors.load(Ordering::Relaxed);
-                    let success_this_sec = current_success - last_success;
-                    let errors_this_sec = current_errors - last_errors;
-                    let flying = aimd_in_flight.load(Ordering::Relaxed);
-                    let current_target = aimd_target.load(Ordering::Relaxed);
-
-                    let new_target = if errors_this_sec == 0 && success_this_sec > 0 {
-                        last_good_concurrency = current_target;
-                        (current_target + 10).min(max_in_flight)
-                    } else if errors_this_sec > 0 {
-                        last_good_concurrency.max(10)
-                    } else {
-                        current_target
-                    };
-                    aimd_target.store(new_target, Ordering::Relaxed);
-
-                    let p50 = hist.value_at_quantile(0.5);
-                    let p99 = hist.value_at_quantile(0.99);
-
-                    aimd_pb.set_message(format!(
-                        "{}/s | p50: {}ms p99: {}ms | Err: {} | Target: {} | Flying: {}",
-                        success_this_sec, p50, p99, current_errors, new_target, flying
-                    ));
-
-                    last_success = current_success;
-                    last_errors = current_errors;
-                }
-                Some(latency) = latency_rx.recv() => {
-                    let _ = hist.record(latency);
-                }
+            // Drain all pending latency samples
+            while let Ok(latency) = latency_rx.try_recv() {
+                let _ = hist.record(latency);
             }
+
+            let current_success = aimd_success.load(Ordering::Relaxed);
+            let current_errors = aimd_errors.load(Ordering::Relaxed);
+            let success_this_sec = current_success - last_success;
+            let errors_this_sec = current_errors - last_errors;
+            let flying = aimd_in_flight.load(Ordering::Relaxed);
+            let current_target = aimd_target.load(Ordering::Relaxed);
+
+            let new_target = if errors_this_sec == 0 && success_this_sec > 0 {
+                last_good_concurrency = current_target;
+                (current_target + 10).min(max_in_flight)
+            } else if errors_this_sec > 0 {
+                last_good_concurrency.max(10)
+            } else {
+                current_target
+            };
+            aimd_target.store(new_target, Ordering::Relaxed);
+
+            let p50 = hist.value_at_quantile(0.5);
+            let p99 = hist.value_at_quantile(0.99);
+
+            aimd_pb.set_message(format!(
+                "{}/s | p50: {}ms p99: {}ms | Err: {} | Target: {} | Inflight: {}",
+                success_this_sec, p50, p99, current_errors, new_target, flying
+            ));
+
+            last_success = current_success;
+            last_errors = current_errors;
         }
     });
 
@@ -285,7 +284,10 @@ pub async fn run_sustained_load(
         let current = in_flight.load(Ordering::Relaxed);
 
         // Spawn tasks up to target
-        while current < target && running.load(Ordering::SeqCst) {
+        let to_spawn = target.saturating_sub(current);
+        for _ in 0..to_spawn {
+            if !running.load(Ordering::SeqCst) { break; }
+
             let payer_id = rand::random::<u32>() % num_accounts + 1;
             let mut payee_id = rand::random::<u32>() % num_accounts + 1;
             while payee_id == payer_id {
@@ -327,7 +329,6 @@ pub async fn run_sustained_load(
                     Err(_) => { errors.fetch_add(1, Ordering::Relaxed); }
                 }
             });
-            break; // Spawn one at a time, let loop re-check
         }
 
         // Process completed tasks
